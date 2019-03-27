@@ -713,7 +713,7 @@ gst_msdkdec_start (GstVideoDecoder * decoder)
     }
   } else {
     if (!gst_msdk_context_ensure_context (GST_ELEMENT_CAST (thiz),
-            thiz->hardware, GST_MSDK_JOB_DECODER))
+            thiz->hardware, 0, GST_MSDK_JOB_DECODER))
       return FALSE;
     GST_INFO_OBJECT (thiz, "Creating new context %" GST_PTR_FORMAT,
         thiz->context);

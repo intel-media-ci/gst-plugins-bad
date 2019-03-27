@@ -48,6 +48,7 @@ struct _GstMsdkContextPrivate
   gboolean hardware;
   gboolean is_joined;
   gboolean has_frame_allocator;
+  gboolean linear;
   GstMsdkContextJobType job_type;
   gint shared_async_depth;
   GMutex mutex;
@@ -176,12 +177,13 @@ failed:
 
 static gboolean
 gst_msdk_context_open (GstMsdkContext * context, gboolean hardware,
-    GstMsdkContextJobType job_type)
+    gboolean linear, GstMsdkContextJobType job_type)
 {
   GstMsdkContextPrivate *priv = context->priv;
 
   priv->job_type = job_type;
   priv->hardware = hardware;
+  priv->linear = linear;
   priv->session =
       msdk_open_session (hardware ? MFX_IMPL_HARDWARE_ANY : MFX_IMPL_SOFTWARE);
   if (!priv->session)
@@ -260,11 +262,12 @@ gst_msdk_context_class_init (GstMsdkContextClass * klass)
 }
 
 GstMsdkContext *
-gst_msdk_context_new (gboolean hardware, GstMsdkContextJobType job_type)
+gst_msdk_context_new (gboolean hardware, gboolean linear,
+    GstMsdkContextJobType job_type)
 {
   GstMsdkContext *obj = g_object_new (GST_TYPE_MSDK_CONTEXT, NULL);
 
-  if (obj && !gst_msdk_context_open (obj, hardware, job_type)) {
+  if (obj && !gst_msdk_context_open (obj, hardware, linear, job_type)) {
     if (obj)
       gst_object_unref (obj);
     return NULL;
@@ -291,6 +294,7 @@ gst_msdk_context_new_with_parent (GstMsdkContext * parent)
   priv->is_joined = TRUE;
   priv->hardware = parent_priv->hardware;
   priv->job_type = parent_priv->job_type;
+  priv->linear = parent_priv->linear;
   parent_priv->child_session_list =
       g_list_prepend (parent_priv->child_session_list, priv->session);
 #ifndef _WIN32
@@ -621,4 +625,10 @@ gst_msdk_context_set_frame_allocator (GstMsdkContext * context,
   }
 
   g_mutex_unlock (&priv->mutex);
+}
+
+gboolean
+gst_msdk_context_is_linear (GstMsdkContext * context)
+{
+  return context->priv->linear;
 }

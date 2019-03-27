@@ -226,7 +226,7 @@ ensure_context (GstBaseTransform * trans)
     }
   } else {
     if (!gst_msdk_context_ensure_context (GST_ELEMENT_CAST (thiz),
-            thiz->hardware, GST_MSDK_JOB_VPP))
+            thiz->hardware, 0, GST_MSDK_JOB_VPP))
       return FALSE;
     GST_INFO_OBJECT (thiz, "Creating new context %" GST_PTR_FORMAT,
         thiz->context);

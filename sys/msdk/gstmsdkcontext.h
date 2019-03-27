@@ -84,7 +84,7 @@ struct _GstMsdkContextClass
 
 GType gst_msdk_context_get_type (void);
 
-GstMsdkContext * gst_msdk_context_new (gboolean hardware, GstMsdkContextJobType job_type);
+GstMsdkContext * gst_msdk_context_new (gboolean hardware, gboolean linear, GstMsdkContextJobType job_type);
 GstMsdkContext * gst_msdk_context_new_with_parent (GstMsdkContext * parent);
 mfxSession gst_msdk_context_get_session (GstMsdkContext * context);
 
@@ -145,6 +145,9 @@ gst_msdk_context_add_shared_async_depth (GstMsdkContext * context, gint async_de
 void
 gst_msdk_context_set_frame_allocator (GstMsdkContext * context,
     mfxFrameAllocator * allocator);
+
+gboolean
+gst_msdk_context_is_linear (GstMsdkContext * context);
 
 G_END_DECLS
 

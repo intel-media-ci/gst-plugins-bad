@@ -46,8 +46,9 @@ gst_msdk_frame_alloc (mfxHDL pthis, mfxFrameAllocRequest * req,
   guint format;
   guint va_fourcc = 0;
   VASurfaceID *surfaces = NULL;
-  VASurfaceAttrib attribs[2];
+  VASurfaceAttrib attribs[4];
   guint num_attribs = 0;
+  VASurfaceAttribExternalBuffers external;
   mfxMemId *mids = NULL;
   GstMsdkContext *context = (GstMsdkContext *) pthis;
   GstMsdkMemoryID *msdk_mids = NULL;
@@ -136,6 +137,26 @@ gst_msdk_frame_alloc (mfxHDL pthis, mfxFrameAllocRequest * req,
     else if (format == VA_RT_FORMAT_YUV444 && va_fourcc == VA_FOURCC_Y410)
       format = VA_RT_FORMAT_YUV444_10;
 #endif
+
+    if (gst_msdk_context_is_linear (context)) {
+      memset (&external, 0, sizeof (external));
+
+      attribs[num_attribs].type = VASurfaceAttribMemoryType;
+      attribs[num_attribs].flags = VA_SURFACE_ATTRIB_SETTABLE;
+      attribs[num_attribs].value.type = VAGenericValueTypeInteger;
+      attribs[num_attribs].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_VA;
+      num_attribs++;
+      /* Don't set TILING flag, the driver will use linear format */
+      external.pixel_format = va_fourcc;
+      external.width = req->Info.Width;
+      external.height = req->Info.Height;
+
+      attribs[num_attribs].type = VASurfaceAttribExternalBufferDescriptor;
+      attribs[num_attribs].flags = VA_SURFACE_ATTRIB_SETTABLE;
+      attribs[num_attribs].value.type = VAGenericValueTypeInteger;
+      attribs[num_attribs].value.value.p = &external;
+      num_attribs++;
+    }
 
     va_status = vaCreateSurfaces (gst_msdk_context_get_handle (context),
         format,
