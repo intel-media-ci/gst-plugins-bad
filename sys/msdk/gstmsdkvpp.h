@@ -125,6 +125,7 @@ struct _GstMsdkVPP
   guint crop_right;
   guint crop_top;
   guint crop_bottom;
+  gboolean force_linear;
 
   GstClockTime buffer_duration;
 

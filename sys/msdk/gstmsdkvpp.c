@@ -137,6 +137,7 @@ enum
   PROP_CROP_RIGHT,
   PROP_CROP_TOP,
   PROP_CROP_BOTTOM,
+  PROP_FORCE_LINEAR,
   PROP_N,
 };
 
@@ -162,6 +163,7 @@ enum
 #define PROP_CROP_RIGHT_DEFAULT          0
 #define PROP_CROP_TOP_DEFAULT            0
 #define PROP_CROP_BOTTOM_DEFAULT         0
+#define PROP_FORCE_LINEAR_DEFAULT        FALSE
 
 #define gst_msdkvpp_parent_class parent_class
 G_DEFINE_TYPE (GstMsdkVPP, gst_msdkvpp, GST_TYPE_BASE_TRANSFORM);
@@ -226,7 +228,7 @@ ensure_context (GstBaseTransform * trans)
     }
   } else {
     if (!gst_msdk_context_ensure_context (GST_ELEMENT_CAST (thiz),
-            thiz->hardware, 0, GST_MSDK_JOB_VPP))
+            thiz->hardware, thiz->force_linear, GST_MSDK_JOB_VPP))
       return FALSE;
     GST_INFO_OBJECT (thiz, "Creating new context %" GST_PTR_FORMAT,
         thiz->context);
@@ -1375,6 +1377,10 @@ gst_msdkvpp_set_property (GObject * object, guint prop_id,
     case PROP_CROP_BOTTOM:
       thiz->crop_bottom = g_value_get_uint (value);
       break;
+    case PROP_FORCE_LINEAR:
+      thiz->force_linear = g_value_get_boolean (value);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1450,6 +1456,10 @@ gst_msdkvpp_get_property (GObject * object, guint prop_id,
     case PROP_CROP_BOTTOM:
       g_value_set_uint (value, thiz->crop_bottom);
       break;
+    case PROP_FORCE_LINEAR:
+      g_value_set_boolean (value, thiz->force_linear);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1638,6 +1648,10 @@ gst_msdkvpp_class_init (GstMsdkVPPClass * klass)
       "Crop Bottom", "Pixels to crop at bottom",
       0, G_MAXUINT16, PROP_CROP_BOTTOM_DEFAULT,
       G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  obj_properties[PROP_FORCE_LINEAR] =
+      g_param_spec_boolean ("force-linear", "Force Linear",
+      "When enabled, surfaces with linear format will be allocated",
+      PROP_FORCE_LINEAR_DEFAULT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties (gobject_class, PROP_N, obj_properties);
 }
@@ -1672,6 +1686,7 @@ gst_msdkvpp_init (GstMsdkVPP * thiz)
   thiz->crop_right = PROP_CROP_RIGHT_DEFAULT;
   thiz->crop_top = PROP_CROP_TOP_DEFAULT;
   thiz->crop_bottom = PROP_CROP_BOTTOM_DEFAULT;
+  thiz->force_linear = PROP_FORCE_LINEAR_DEFAULT;
 
   gst_video_info_init (&thiz->sinkpad_info);
   gst_video_info_init (&thiz->srcpad_info);
