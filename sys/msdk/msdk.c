@@ -219,6 +219,7 @@ gst_msdk_set_video_alignment (GstVideoInfo * info, guint alloc_w, guint alloc_h,
     GstVideoAlignment * alignment)
 {
   guint i, width, height;
+  guint stride_align = 127;     /* 128-byte alignment */
 
   width = GST_VIDEO_INFO_WIDTH (info);
   height = GST_VIDEO_INFO_HEIGHT (info);
@@ -232,9 +233,18 @@ gst_msdk_set_video_alignment (GstVideoInfo * info, guint alloc_w, guint alloc_h,
   if (alloc_h == 0)
     alloc_h = height;
 
+  /* Allocate linear surface in the media driver for below formats */
+  if (GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_BGRA ||
+      GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_BGRx ||
+      GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_BGR10A2_LE ||
+      GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_RGB16 ||
+      GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_I420 ||
+      GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_YV12)
+    stride_align = 31;          /* 32-byte alignment */
+
   gst_video_alignment_reset (alignment);
   for (i = 0; i < GST_VIDEO_INFO_N_PLANES (info); i++)
-    alignment->stride_align[i] = 15;    /* 16-byte alignment */
+    alignment->stride_align[i] = stride_align;
 
   alignment->padding_right = GST_ROUND_UP_16 (alloc_w) - width;
   alignment->padding_bottom = GST_ROUND_UP_32 (alloc_h) - height;
