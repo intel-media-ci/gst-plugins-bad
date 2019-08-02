@@ -480,6 +480,7 @@ gst_msdkdec_set_src_caps (GstMsdkDec * thiz, gboolean need_allocation)
   guint width, height;
   guint alloc_w, alloc_h;
   const gchar *format_str;
+  gboolean use_dmabuf = FALSE;
 
   /* use display width and display height in output state, which
    * will be used for caps negotiation */
@@ -519,19 +520,23 @@ gst_msdkdec_set_src_caps (GstMsdkDec * thiz, gboolean need_allocation)
   gst_msdk_set_video_alignment (vinfo, alloc_w, alloc_h, &align);
   gst_video_info_align (vinfo, &align);
   output_state->caps = gst_video_info_to_caps (vinfo);
-  if (srcpad_can_dmabuf (thiz))
+  if (srcpad_can_dmabuf (thiz)) {
     gst_caps_set_features (output_state->caps, 0,
         gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_DMABUF, NULL));
+    use_dmabuf = TRUE;;
+  }
   thiz->output_info = output_state->info;
 
   if (need_allocation) {
     /* Find allocation width and height */
-    width =
-        GST_ROUND_UP_16 (thiz->param.mfx.FrameInfo.Width ? thiz->param.mfx.
-        FrameInfo.Width : GST_VIDEO_INFO_WIDTH (&output_state->info));
-    height =
-        GST_ROUND_UP_32 (thiz->param.mfx.FrameInfo.Height ? thiz->param.mfx.
-        FrameInfo.Height : GST_VIDEO_INFO_HEIGHT (&output_state->info));
+    if (use_dmabuf) {
+      width =
+          GST_ROUND_UP_16 (thiz->param.mfx.FrameInfo.Width ? thiz->param.mfx.
+          FrameInfo.Width : GST_VIDEO_INFO_WIDTH (&output_state->info));
+      height =
+          GST_ROUND_UP_32 (thiz->param.mfx.FrameInfo.Height ? thiz->param.mfx.
+          FrameInfo.Height : GST_VIDEO_INFO_HEIGHT (&output_state->info));
+    }
 
     /* set allocation width and height in allocation_caps,
      * which may or may not be similar to the output_state caps */
