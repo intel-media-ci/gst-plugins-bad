@@ -1005,7 +1005,7 @@ _gst_caps_has_feature (const GstCaps * caps, const gchar * feature)
 }
 
 static gboolean
-sinkpad_can_dmabuf (GstMsdkEnc * thiz)
+sinkpad_has_feature (GstMsdkEnc * thiz, const gchar * feature)
 {
   gboolean ret = FALSE;
   GstCaps *caps, *allowed_caps;
@@ -1021,7 +1021,7 @@ sinkpad_can_dmabuf (GstMsdkEnc * thiz)
       || allowed_caps == caps)
     goto done;
 
-  if (_gst_caps_has_feature (allowed_caps, GST_CAPS_FEATURE_MEMORY_DMABUF))
+  if (_gst_caps_has_feature (allowed_caps, feature))
     ret = TRUE;
 
 done:
@@ -1053,9 +1053,6 @@ gst_msdkenc_set_format (GstVideoEncoder * encoder, GstVideoCodecState * state)
   thiz->use_video_memory = FALSE;
 #endif
 
-  GST_INFO_OBJECT (encoder, "This MSDK encoder uses %s memory",
-      thiz->use_video_memory ? "video" : "system");
-
   if (klass->set_format) {
     if (!klass->set_format (thiz))
       return FALSE;
@@ -1065,12 +1062,28 @@ gst_msdkenc_set_format (GstVideoEncoder * encoder, GstVideoCodecState * state)
    * based pipeline usage. Ideally we should have dmabuf support even with
    * raw-caps negotiation, but we don't have dmabuf-import support in msdk
    * plugin yet */
-  if (sinkpad_can_dmabuf (thiz)) {
+#ifndef _WIN32
+  if (sinkpad_has_feature (thiz, GST_CAPS_FEATURE_MEMORY_DMABUF)) {
     thiz->input_state->caps = gst_caps_make_writable (thiz->input_state->caps);
     gst_caps_set_features (thiz->input_state->caps, 0,
         gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_DMABUF, NULL));
     thiz->use_dmabuf = TRUE;
+    thiz->use_video_memory = TRUE;
+  } else if (sinkpad_has_feature (thiz, GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY)) {
+    thiz->input_state->caps = gst_caps_make_writable (thiz->input_state->caps);
+    gst_caps_set_features (thiz->input_state->caps, 0,
+        gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY, NULL));
+    thiz->use_dmabuf = FALSE;
+    thiz->use_video_memory = TRUE;
+  } else
+#endif
+  {
+    thiz->use_dmabuf = FALSE;
+    thiz->use_video_memory = FALSE;
   }
+
+  GST_INFO_OBJECT (encoder, "This MSDK encoder uses %s memory",
+      thiz->use_video_memory ? "video" : "system");
 
   if (!gst_msdkenc_init_encoder (thiz))
     return FALSE;
