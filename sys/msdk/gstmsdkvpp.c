@@ -85,12 +85,14 @@ GST_DEBUG_CATEGORY_EXTERN (gst_msdkvpp_debug);
 #define DMABUF_SRC_CAPS_STR ""
 #endif
 
-
 static GstStaticPadTemplate gst_msdkvpp_sink_factory =
     GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE (SUPPORTED_SYSTEM_FORMAT)
+        ", " "interlace-mode = (string){ progressive, interleaved, mixed }" ";"
+        GST_MSDK_CAPS_MAKE_WITH_FEATURES (GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY,
+            SUPPORTED_SYSTEM_FORMAT)
         ", " "interlace-mode = (string){ progressive, interleaved, mixed }" ";"
         DMABUF_SINK_CAPS_STR));
 
@@ -101,7 +103,11 @@ static GstStaticPadTemplate gst_msdkvpp_src_factory =
     GST_STATIC_CAPS (DMABUF_SRC_CAPS_STR
         GST_VIDEO_CAPS_MAKE ("{ BGRA, NV12, YUY2, UYVY, VUYA, BGRx, P010_10LE"
             EXT_FORMATS "}") ", "
-        "interlace-mode = (string){ progressive, interleaved, mixed }" ";"));
+        "interlace-mode = (string){ progressive, interleaved, mixed }" ";"
+        GST_MSDK_CAPS_MAKE_WITH_FEATURES (GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY,
+            "{ BGRA, NV12, YUY2, UYVY, VUYA, BGRx, P010_10LE"
+            EXT_FORMATS "}") ", "
+        "interlace-mode = (string){ progressive, interleaved, mixed }"));
 
 enum
 {
