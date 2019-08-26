@@ -114,6 +114,9 @@ GType gst_msdk_system_allocator_get_type (void);
 
 GstAllocator * gst_msdk_system_allocator_new (GstVideoInfo *image_info);
 
+void gst_msdk_system_allocator_set_video_info (GstAllocator * allocator,
+                                               GstVideoInfo * info);
+
 G_END_DECLS
 
 #endif /* GST_MSDK_SYSTEM_MEMORY_H */

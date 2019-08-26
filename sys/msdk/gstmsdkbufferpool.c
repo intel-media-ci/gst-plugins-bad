@@ -54,6 +54,8 @@ struct _GstMsdkBufferPoolPrivate
   mfxFrameAllocResponse *alloc_response;
   GstMsdkMemoryType memory_type;
   gboolean add_videometa;
+  GstVideoAlignment video_align;
+  GstAllocationParams params;
 };
 
 #define gst_msdk_buffer_pool_parent_class parent_class
@@ -103,6 +105,8 @@ gst_msdk_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   GstAllocator *allocator = NULL;
   GstVideoInfo video_info;
   guint size, min_buffers, max_buffers;
+  GstAllocationParams params;
+  guint width, height;
 
   if (!gst_buffer_pool_config_get_params (config, &caps, &size, &min_buffers,
           &max_buffers))
@@ -114,7 +118,7 @@ gst_msdk_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
   if (!gst_video_info_from_caps (&video_info, caps))
     goto error_invalid_caps;
 
-  if (!gst_buffer_pool_config_get_allocator (config, &allocator, NULL))
+  if (!gst_buffer_pool_config_get_allocator (config, &allocator, &params))
     goto error_invalid_allocator;
 
   if (allocator
@@ -128,17 +132,50 @@ gst_msdk_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
     allocator = NULL;
   }
 
+  width = video_info.width;
+  height = video_info.height;
+
+  priv->params = params;
+
   priv->add_videometa = gst_buffer_pool_config_has_option (config,
       GST_BUFFER_POOL_OPTION_VIDEO_META);
 
   if (priv->add_videometa && gst_buffer_pool_config_has_option (config,
           GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT)) {
-    GstVideoAlignment alignment;
+    guint max_align, n;
 
-    gst_msdk_set_video_alignment (&video_info, 0, 0, &alignment);
-    gst_video_info_align (&video_info, &alignment);
-    gst_buffer_pool_config_set_video_alignment (config, &alignment);
+    /* msdk needs at least 16 bytes alignment */
+    max_align = 15;
+
+    gst_buffer_pool_config_get_video_alignment (config, &priv->video_align);
+
+    for (n = 0; n < GST_VIDEO_MAX_PLANES; ++n)
+      max_align |= priv->video_align.stride_align[n];
+
+    for (n = 0; n < GST_VIDEO_MAX_PLANES; ++n)
+      priv->video_align.stride_align[n] = max_align;
+
+    priv->video_align.padding_right =
+        GST_ROUND_UP_16 (priv->video_align.padding_right + width) - width;
+    priv->video_align.padding_bottom =
+        GST_ROUND_UP_32 (priv->video_align.padding_bottom + height) - height;
+
+    if (!gst_video_info_align (&video_info, &priv->video_align))
+      goto failed_to_align;
+
+    gst_buffer_pool_config_set_video_alignment (config, &priv->video_align);
+
+    if (priv->params.align < max_align) {
+      GST_WARNING_OBJECT (pool, "allocation params alignment %u is smaller "
+          "than the max specified video stride alignment %u, fixing",
+          (guint) priv->params.align, max_align);
+      priv->params.align = max_align;
+      gst_buffer_pool_config_set_allocator (config, allocator, &priv->params);
+    }
   }
+
+  video_info.size = MAX (size, video_info.size);
+  msdk_pool->info = video_info;
 
   priv->memory_type = _msdk_get_memory_type (config);
   if (((priv->memory_type == GST_MSDK_MEMORY_TYPE_VIDEO)
@@ -151,8 +188,6 @@ gst_msdk_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
 
   /* create a new allocator if needed */
   if (!allocator) {
-    GstAllocationParams params = { 0, 31, 0, 0, };
-
     if (priv->memory_type == GST_MSDK_MEMORY_TYPE_DMABUF)
       allocator =
           gst_msdk_dmabuf_allocator_new (priv->context, &video_info,
@@ -169,8 +204,16 @@ gst_msdk_buffer_pool_set_config (GstBufferPool * pool, GstStructure * config)
 
     GST_INFO_OBJECT (pool, "created new allocator %" GST_PTR_FORMAT, allocator);
 
-    gst_buffer_pool_config_set_allocator (config, allocator, &params);
+    gst_buffer_pool_config_set_allocator (config, allocator, &priv->params);
     gst_object_unref (allocator);
+  } else {
+    /* Update video-info */
+    if (priv->memory_type == GST_MSDK_MEMORY_TYPE_DMABUF)
+      gst_msdk_dmabuf_allocator_set_video_info (allocator, &video_info);
+    else if (priv->memory_type == GST_MSDK_MEMORY_TYPE_VIDEO)
+      gst_msdk_video_allocator_set_video_info (allocator, &video_info);
+    else
+      gst_msdk_system_allocator_set_video_info (allocator, &video_info);
   }
 
   if (priv->allocator)
@@ -203,6 +246,11 @@ error_invalid_allocator:
 error_no_allocator:
   {
     GST_ERROR_OBJECT (pool, "no allocator defined");
+    return FALSE;
+  }
+failed_to_align:
+  {
+    GST_ERROR_OBJECT (pool, "Failed to align");
     return FALSE;
   }
 }

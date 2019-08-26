@@ -73,6 +73,9 @@ typedef struct _GstMsdkBufferPoolPrivate GstMsdkBufferPoolPrivate;
 struct _GstMsdkBufferPool
 {
   GstVideoBufferPool parent_instance;
+  GstVideoInfo info;
+
+  /*< private >*/
   GstMsdkBufferPoolPrivate *priv;
 };
 

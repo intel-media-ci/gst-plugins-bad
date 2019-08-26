@@ -134,6 +134,9 @@ GType gst_msdk_video_allocator_get_type (void);
 GstAllocator * gst_msdk_video_allocator_new (GstMsdkContext * context,
     GstVideoInfo *image_info, mfxFrameAllocResponse * alloc_resp);
 
+void gst_msdk_video_allocator_set_video_info (GstAllocator * allocator,
+                                              GstVideoInfo * info);
+
 /* ---------------------------------------------------------------------*/
 /* GstMsdkDmaBufMemory                                                  */
 /* ---------------------------------------------------------------------*/
@@ -189,6 +192,9 @@ GType gst_msdk_dmabuf_allocator_get_type (void);
 
 GstAllocator * gst_msdk_dmabuf_allocator_new (GstMsdkContext * context,
     GstVideoInfo *image_info, mfxFrameAllocResponse * alloc_resp);
+
+void gst_msdk_dmabuf_allocator_set_video_info (GstAllocator * allocator,
+                                               GstVideoInfo * info);
 
 G_END_DECLS
 

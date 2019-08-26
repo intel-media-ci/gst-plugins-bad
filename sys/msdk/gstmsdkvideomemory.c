@@ -376,6 +376,16 @@ gst_msdk_video_allocator_new (GstMsdkContext * context,
   return GST_ALLOCATOR_CAST (allocator);
 }
 
+void
+gst_msdk_video_allocator_set_video_info (GstAllocator * allocator,
+    GstVideoInfo * info)
+{
+  g_return_if_fail (GST_IS_MSDK_VIDEO_ALLOCATOR (allocator));
+  g_return_if_fail (info != NULL);
+
+  GST_MSDK_VIDEO_ALLOCATOR (allocator)->image_info = *info;
+}
+
 /* GstMsdkDmaBufMemory */
 GstMemory *
 gst_msdk_dmabuf_memory_new (GstAllocator * base_allocator)
@@ -480,4 +490,14 @@ gst_msdk_dmabuf_allocator_new (GstMsdkContext * context,
   allocator->alloc_response = alloc_resp;
 
   return GST_ALLOCATOR_CAST (allocator);
+}
+
+void
+gst_msdk_dmabuf_allocator_set_video_info (GstAllocator * allocator,
+    GstVideoInfo * info)
+{
+  g_return_if_fail (GST_IS_MSDK_DMABUF_ALLOCATOR (allocator));
+  g_return_if_fail (info != NULL);
+
+  GST_MSDK_DMABUF_ALLOCATOR (allocator)->image_info = *info;
 }

@@ -300,3 +300,13 @@ gst_msdk_system_allocator_new (GstVideoInfo * image_info)
 
   return GST_ALLOCATOR_CAST (allocator);
 }
+
+void
+gst_msdk_system_allocator_set_video_info (GstAllocator * allocator,
+    GstVideoInfo * info)
+{
+  g_return_if_fail (GST_IS_MSDK_SYSTEM_ALLOCATOR (allocator));
+  g_return_if_fail (info != NULL);
+
+  GST_MSDK_SYSTEM_ALLOCATOR (allocator)->image_info = *info;
+}
