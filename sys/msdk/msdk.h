@@ -43,6 +43,13 @@
 
 #include <mfxvideo.h>
 
+/**
+ * GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY:
+ *
+ * Name of the caps feature for indicating the use of msdk video memory
+ */
+#define GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY "memory:MSDKMemory"
+
 G_BEGIN_DECLS
 
 mfxSession msdk_open_session (mfxIMPL impl);
@@ -81,6 +88,26 @@ gst_msdk_update_mfx_frame_info_from_mfx_video_param (mfxFrameInfo * mfx_info,
 void
 gst_msdk_get_mfx_video_orientation_from_video_direction (guint value,
     guint * mfx_mirror, guint * mfx_rotation);
+
+#define GST_MSDK_CAPS_MAKE(format) \
+  GST_VIDEO_CAPS_MAKE (format) ", " \
+  "interlace-mode = (string) progressive"
+
+#define GST_MSDK_CAPS_MAKE_WITH_FEATURES(features,format) \
+  GST_VIDEO_CAPS_MAKE_WITH_FEATURES(features,format) ", " \
+  "interlace-mode = (string) progressive"
+
+#ifndef _WIN32
+#define GST_MSDK_CAPS_DMABUF(dmaformat) \
+  GST_MSDK_CAPS_MAKE_WITH_FEATURES(GST_CAPS_FEATURE_MEMORY_DMABUF, dmaformat)
+#else
+#define GST_MSDK_CAPS_DMABUF(dmaformat) ""
+#endif
+
+#define GST_MSDK_CAPS_STR(format,dmaformat) \
+  GST_MSDK_CAPS_MAKE (format) ";" \
+  GST_MSDK_CAPS_MAKE_WITH_FEATURES (GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY,format) ";" \
+  GST_MSDK_CAPS_DMABUF (dmaformat)
 
 G_END_DECLS
 
