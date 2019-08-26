@@ -439,7 +439,7 @@ _gst_caps_has_feature (const GstCaps * caps, const gchar * feature)
 }
 
 static gboolean
-srcpad_can_dmabuf (GstMsdkDec * thiz)
+srcpad_has_feature (GstMsdkDec * thiz, const gchar * feature)
 {
   gboolean ret = FALSE;
   GstCaps *caps, *out_caps;
@@ -456,7 +456,7 @@ srcpad_can_dmabuf (GstMsdkDec * thiz)
       || out_caps == caps)
     goto done;
 
-  if (_gst_caps_has_feature (out_caps, GST_CAPS_FEATURE_MEMORY_DMABUF))
+  if (_gst_caps_has_feature (out_caps, feature))
     ret = TRUE;
 
 done:
@@ -517,9 +517,13 @@ gst_msdkdec_set_src_caps (GstMsdkDec * thiz, gboolean need_allocation)
   gst_msdk_set_video_alignment (vinfo, alloc_w, alloc_h, &align);
   gst_video_info_align (vinfo, &align);
   output_state->caps = gst_video_info_to_caps (vinfo);
-  if (srcpad_can_dmabuf (thiz))
+  if (srcpad_has_feature (thiz, GST_CAPS_FEATURE_MEMORY_DMABUF)) {
     gst_caps_set_features (output_state->caps, 0,
         gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_DMABUF, NULL));
+  } else if (srcpad_has_feature (thiz, GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY)) {
+    gst_caps_set_features (output_state->caps, 0,
+        gst_caps_features_new (GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY, NULL));
+  }
 
   if (need_allocation) {
     /* Find allocation width and height */
@@ -1224,9 +1228,21 @@ gst_msdkdec_decide_allocation (GstVideoDecoder * decoder, GstQuery * query)
   /* this will get updated with msdk requirement */
   thiz->min_prealloc_buffers = min_buffers;
 
+#ifndef _WIN32
   if (_gst_caps_has_feature (pool_caps, GST_CAPS_FEATURE_MEMORY_DMABUF)) {
     GST_INFO_OBJECT (decoder, "This MSDK decoder uses DMABuf memory");
     thiz->use_video_memory = thiz->use_dmabuf = TRUE;
+  } else if (_gst_caps_has_feature (pool_caps,
+          GST_CAPS_FEATURE_MEMORY_MSDK_MEMORY)) {
+    GST_INFO_OBJECT (decoder, "This MSDK decoder uses Video memory");
+    thiz->use_video_memory = TRUE;
+    thiz->use_dmabuf = FALSE;
+  } else
+#endif
+  {
+    GST_INFO_OBJECT (decoder, "This MSDK decoder uses System memory");
+    thiz->use_video_memory = FALSE;
+    thiz->use_dmabuf = FALSE;
   }
 
   /* Initialize MSDK decoder before new bufferpool tries to alloc each buffer,
