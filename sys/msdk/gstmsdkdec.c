@@ -1122,7 +1122,6 @@ gst_msdkdec_create_buffer_pool (GstMsdkDec * thiz, GstVideoInfo * info,
   GstBufferPool *pool = NULL;
   GstStructure *config;
   GstAllocator *allocator = NULL;
-  GstVideoAlignment align;
   GstCaps *caps = NULL;
   GstAllocationParams params = { 0, 31, 0, 0, };
   mfxFrameAllocResponse *alloc_resp = NULL;
@@ -1166,7 +1165,6 @@ gst_msdkdec_create_buffer_pool (GstMsdkDec * thiz, GstVideoInfo * info,
           GST_BUFFER_POOL_OPTION_MSDK_USE_DMABUF);
   }
 
-  gst_buffer_pool_config_set_video_alignment (config, &align);
   gst_buffer_pool_config_set_allocator (config, allocator, &params);
   gst_object_unref (allocator);
 
