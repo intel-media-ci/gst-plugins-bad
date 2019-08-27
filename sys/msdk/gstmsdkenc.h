@@ -128,7 +128,6 @@ struct _GstMsdkEnc
 
   GstBufferPool *msdk_pool;
   GstBufferPool *msdk_converted_pool;
-  GstVideoInfo aligned_info;
   gboolean use_video_memory;
   gboolean use_dmabuf;
   gboolean initialized;

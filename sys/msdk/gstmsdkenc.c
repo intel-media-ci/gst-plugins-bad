@@ -902,7 +902,7 @@ gst_msdkenc_set_src_caps (GstMsdkEnc * thiz)
 
 static GstBufferPool *
 gst_msdkenc_create_buffer_pool (GstMsdkEnc * thiz, GstCaps * caps,
-    guint num_buffers, gboolean set_align)
+    guint num_buffers, mfxFrameAllocResponse * alloc_resp)
 {
   GstBufferPool *pool = NULL;
   GstStructure *config;
@@ -910,12 +910,6 @@ gst_msdkenc_create_buffer_pool (GstMsdkEnc * thiz, GstCaps * caps,
   GstVideoInfo info;
   GstVideoAlignment align;
   GstAllocationParams params = { 0, 31, 0, 0, };
-  mfxFrameAllocResponse *alloc_resp = NULL;
-
-  if (thiz->has_vpp)
-    alloc_resp = set_align ? &thiz->vpp_alloc_resp : &thiz->alloc_resp;
-  else
-    alloc_resp = &thiz->alloc_resp;
 
   pool = gst_msdk_buffer_pool_new (thiz->context, alloc_resp);
   if (!pool)
@@ -960,9 +954,6 @@ gst_msdkenc_create_buffer_pool (GstMsdkEnc * thiz, GstCaps * caps,
 
   if (!gst_buffer_pool_set_config (pool, config))
     goto error_pool_config;
-
-  if (set_align)
-    thiz->aligned_info = info;
 
   return pool;
 
@@ -1097,7 +1088,7 @@ gst_msdkenc_set_format (GstVideoEncoder * encoder, GstVideoCodecState * state)
     guint num_buffers = gst_msdkenc_maximum_delayed_frames (thiz) + 1;
     thiz->msdk_pool =
         gst_msdkenc_create_buffer_pool (thiz, thiz->input_state->caps,
-        num_buffers, TRUE);
+        num_buffers, thiz->has_vpp ? &thiz->vpp_alloc_resp : &thiz->alloc_resp);
   }
 
   gst_msdkenc_set_latency (thiz);
@@ -1115,7 +1106,8 @@ gst_msdkenc_set_format (GstVideoEncoder * encoder, GstVideoCodecState * state)
     caps = gst_video_info_to_caps (&nv12_info);
 
     pool =
-        gst_msdkenc_create_buffer_pool (thiz, caps, thiz->num_surfaces, FALSE);
+        gst_msdkenc_create_buffer_pool (thiz, caps, thiz->num_surfaces,
+        &thiz->alloc_resp);
 
     thiz->msdk_converted_pool = pool;
     gst_caps_unref (caps);
@@ -1158,7 +1150,7 @@ gst_msdkenc_get_surface_from_pool (GstMsdkEnc * thiz, GstBufferPool * pool,
 #ifndef _WIN32
 static gboolean
 import_dmabuf_to_msdk_surface (GstMsdkEnc * thiz, GstBuffer * buf,
-    MsdkSurface * msdk_surface)
+    MsdkSurface * msdk_surface, GstVideoInfo * pool_info)
 {
   GstMemory *mem = NULL;
   GstVideoInfo vinfo;
@@ -1200,7 +1192,7 @@ import_dmabuf_to_msdk_surface (GstMsdkEnc * thiz, GstBuffer * buf,
    *
    * See this: https://github.com/intel/media-driver/issues/169
    * */
-  if (GST_VIDEO_INFO_SIZE (&vinfo) < GST_VIDEO_INFO_SIZE (&thiz->aligned_info))
+  if (GST_VIDEO_INFO_SIZE (&vinfo) < GST_VIDEO_INFO_SIZE (pool_info))
     return FALSE;
 
   mfx_surface = msdk_surface->surface;
@@ -1247,7 +1239,8 @@ gst_msdkenc_get_surface_from_frame (GstMsdkEnc * thiz,
    * buffer, we could try to export the dmabuf to underlined vasurface */
   mem = gst_buffer_peek_memory (inbuf, 0);
   if (gst_is_dmabuf_memory (mem)) {
-    if (import_dmabuf_to_msdk_surface (thiz, inbuf, msdk_surface))
+    if (import_dmabuf_to_msdk_surface (thiz, inbuf, msdk_surface,
+            &GST_MSDK_BUFFER_POOL_CAST (thiz->msdk_pool)->info))
       return msdk_surface;
     else
       GST_INFO_OBJECT (thiz, "Upstream dmabuf-backed memory is not imported"
@@ -1261,7 +1254,8 @@ gst_msdkenc_get_surface_from_frame (GstMsdkEnc * thiz,
     goto error;
   }
 
-  if (!gst_video_frame_map (&out_frame, &thiz->aligned_info, msdk_surface->buf,
+  if (!gst_video_frame_map (&out_frame,
+          &GST_MSDK_BUFFER_POOL_CAST (thiz->msdk_pool)->info, msdk_surface->buf,
           GST_MAP_WRITE)) {
     GST_ERROR_OBJECT (thiz, "failed to map the frame for destination");
     gst_video_frame_unmap (&src_frame);
@@ -1533,9 +1527,11 @@ gst_msdkenc_propose_allocation (GstVideoEncoder * encoder, GstQuery * query)
   }
 
   num_buffers = gst_msdkenc_maximum_delayed_frames (thiz) + 1;
-  pool = gst_msdkenc_create_buffer_pool (thiz, caps, num_buffers, TRUE);
+  pool = gst_msdkenc_create_buffer_pool (thiz, caps, num_buffers,
+      thiz->has_vpp ? &thiz->vpp_alloc_resp : &thiz->alloc_resp);
 
-  gst_query_add_allocation_pool (query, pool, GST_VIDEO_INFO_SIZE (&info),
+  gst_query_add_allocation_pool (query, pool,
+      GST_VIDEO_INFO_SIZE (&GST_MSDK_BUFFER_POOL_CAST (thiz->msdk_pool)->info),
       num_buffers, 0);
   gst_query_add_allocation_meta (query, GST_VIDEO_META_API_TYPE, NULL);
 
