@@ -79,6 +79,10 @@ fixate_output_frame_size (GstMsdkVPP * thiz, GstVideoInfo * vinfo,
     from_w = GST_VIDEO_INFO_WIDTH (vinfo);
     from_h = GST_VIDEO_INFO_HEIGHT (vinfo);
 
+    /* adjust for crop settings */
+    from_w -= thiz->crop_left + thiz->crop_right;
+    from_h -= thiz->crop_top + thiz->crop_bottom;
+
     /* compensate for rotation if needed */
     if (thiz->rotation == 90 || thiz->rotation == 270) {
       SWAP_GINT (from_w, from_h);
