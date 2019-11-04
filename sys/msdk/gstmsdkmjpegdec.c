@@ -54,7 +54,8 @@ static GstStaticPadTemplate sink_factory = GST_STATIC_PAD_TEMPLATE ("sink",
 static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS (GST_MSDK_CAPS_STR ("{ NV12, YUY2 }", "{ NV12, YUY2 }"))
+    GST_STATIC_CAPS (GST_MSDK_CAPS_STR ("{ NV12, YUY2, BGRA }",
+            "{ NV12, YUY2, BGRA }"))
     );
 
 #define gst_msdkmjpegdec_parent_class parent_class
@@ -83,6 +84,11 @@ gst_msdkmjpegdec_post_configure (GstMsdkDec * decoder)
   switch (decoder->param.mfx.JPEGChromaFormat) {
     case MFX_CHROMAFORMAT_YUV422:
       decoder->param.mfx.FrameInfo.FourCC = MFX_FOURCC_YUY2;
+      decoder->param.mfx.FrameInfo.ChromaFormat =
+          decoder->param.mfx.JPEGChromaFormat;
+      break;
+    case MFX_CHROMAFORMAT_YUV444:
+      decoder->param.mfx.FrameInfo.FourCC = MFX_FOURCC_RGB4;
       decoder->param.mfx.FrameInfo.ChromaFormat =
           decoder->param.mfx.JPEGChromaFormat;
       break;
