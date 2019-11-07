@@ -64,7 +64,9 @@ gst_msdkvp8dec_configure (GstMsdkDec * decoder)
   uid = &MFX_PLUGINID_VP8D_HW;
 
   status = MFXVideoUSER_Load (session, uid, 1);
-  if (status < MFX_ERR_NONE) {
+  if (status == MFX_ERR_UNDEFINED_BEHAVIOR) {
+    GST_WARNING_OBJECT (vp8dec, "Media SDK Plugin for vp8dec has been loaded");
+  } else if (status < MFX_ERR_NONE) {
     GST_ERROR_OBJECT (vp8dec, "Media SDK Plugin load failed (%s)",
         msdk_status_to_string (status));
     return FALSE;

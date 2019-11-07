@@ -121,7 +121,9 @@ gst_msdkvp9enc_configure (GstMsdkEnc * encoder)
     session = gst_msdk_context_get_session (encoder->context);
     status = MFXVideoUSER_Load (session, &MFX_PLUGINID_VP9E_HW, 1);
 
-    if (status < MFX_ERR_NONE) {
+    if (status == MFX_ERR_UNDEFINED_BEHAVIOR) {
+      GST_WARNING_OBJECT (thiz, "Media SDK Plugin for vp9enc has been loaded");
+    } else if (status < MFX_ERR_NONE) {
       GST_ERROR_OBJECT (thiz, "Media SDK Plugin load failed (%s)",
           msdk_status_to_string (status));
       return FALSE;
