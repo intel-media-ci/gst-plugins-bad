@@ -443,7 +443,7 @@ gst_h264_parse_wrap_nal (GstH264Parse * h264parse, guint format, guint8 * data,
       || format == GST_H264_PARSE_FORMAT_AVC3) {
     tmp = GUINT32_TO_BE (size << (32 - 8 * nl));
   } else {
-    /* HACK: nl should always be 4 here, otherwise this won't work. 
+    /* HACK: nl should always be 4 here, otherwise this won't work.
      * There are legit cases where nl in avc stream is 2, but byte-stream
      * SC is still always 4 bytes. */
     nl = 4;
@@ -2241,8 +2241,8 @@ gst_h264_parse_get_timestamp (GstH264Parse * h264parse,
           sps->vui_parameters.num_units_in_tick,
           sps->vui_parameters.time_scale);
     } else {
-      /* If no upstream timestamp is given, we write in new timestamp */
-      upstream = h264parse->dts = h264parse->ts_trn_nb +
+      /* Otherwise just compute the DTS */
+      h264parse->dts = h264parse->ts_trn_nb +
           (GstClockTime) gst_util_uint64_scale
           (h264parse->sei_cpb_removal_delay * GST_SECOND,
           sps->vui_parameters.num_units_in_tick,
