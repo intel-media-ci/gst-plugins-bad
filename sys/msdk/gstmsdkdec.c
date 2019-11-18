@@ -1105,7 +1105,11 @@ gst_msdkdec_handle_frame (GstVideoDecoder * decoder, GstVideoCodecFrame * frame)
 
       if (surface->surface->Data.Locked > 0)
         surface = NULL;
-      flow = GST_VIDEO_DECODER_FLOW_NEED_DATA;
+
+      if (!gst_video_decoder_get_packetized (decoder))
+        flow = GST_VIDEO_DECODER_FLOW_NEED_DATA;
+      else
+        flow = GST_FLOW_OK;
       break;
     } else if (status == MFX_ERR_MORE_SURFACE) {
       surface = NULL;
