@@ -1016,8 +1016,6 @@ gst_msdkdec_handle_frame (GstVideoDecoder * decoder, GstVideoCodecFrame * frame)
   gst_video_codec_frame_unref (frame);
   frame = NULL;
   for (;;) {
-    if (thiz->postpone_free_surface)
-      gst_msdkdec_free_unlocked_msdk_surfaces (thiz, surface);
     task = &g_array_index (thiz->tasks, MsdkDecTask, thiz->next_task);
     flow = gst_msdkdec_finish_task (thiz, task);
     if (flow != GST_FLOW_OK) {
@@ -1026,6 +1024,9 @@ gst_msdkdec_handle_frame (GstVideoDecoder * decoder, GstVideoCodecFrame * frame)
       goto error;
     }
     if (!surface) {
+      if (thiz->postpone_free_surface || thiz->use_video_memory)
+        gst_msdkdec_free_unlocked_msdk_surfaces (thiz, surface);
+
       flow = allocate_output_buffer (thiz, &buffer);
       if (flow == GST_FLOW_CUSTOM_SUCCESS) {
         flow = GST_FLOW_OK;
@@ -1435,8 +1436,6 @@ gst_msdkdec_drain (GstVideoDecoder * decoder)
   session = gst_msdk_context_get_session (thiz->context);
 
   for (;;) {
-    if (thiz->postpone_free_surface)
-      gst_msdkdec_free_unlocked_msdk_surfaces (thiz, surface);
     task = &g_array_index (thiz->tasks, MsdkDecTask, thiz->next_task);
     if ((flow = gst_msdkdec_finish_task (thiz, task)) != GST_FLOW_OK) {
       if (flow != GST_FLOW_FLUSHING)
@@ -1446,6 +1445,9 @@ gst_msdkdec_drain (GstVideoDecoder * decoder)
     }
 
     if (!surface) {
+      if (thiz->postpone_free_surface || thiz->use_video_memory)
+        gst_msdkdec_free_unlocked_msdk_surfaces (thiz, surface);
+
       flow = allocate_output_buffer (thiz, &buffer);
       if (flow != GST_FLOW_OK)
         return flow;
