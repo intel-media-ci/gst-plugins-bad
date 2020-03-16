@@ -164,7 +164,7 @@ gst_msdkvc1dec_preinit_decoder (GstMsdkDec * decoder)
   decoder->param.mfx.FrameInfo.Width =
       GST_ROUND_UP_16 (decoder->param.mfx.FrameInfo.Width);
   decoder->param.mfx.FrameInfo.Height =
-      GST_ROUND_UP_32 (decoder->param.mfx.FrameInfo.Height);
+      GST_ROUND_UP_128 (decoder->param.mfx.FrameInfo.Height);
 
   return TRUE;
 }

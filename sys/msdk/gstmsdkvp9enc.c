@@ -142,7 +142,7 @@ gst_msdkvp9enc_configure (GstMsdkEnc * encoder)
   encoder->param.mfx.FrameInfo.Width =
       GST_ROUND_UP_128 (encoder->param.mfx.FrameInfo.CropW);
   encoder->param.mfx.FrameInfo.Height =
-      GST_ROUND_UP_32 (encoder->param.mfx.FrameInfo.CropH);
+      GST_ROUND_UP_128 (encoder->param.mfx.FrameInfo.CropH);
 
   /* Always turn on this flag for VP9 */
   encoder->param.mfx.LowPower = MFX_CODINGOPTION_ON;

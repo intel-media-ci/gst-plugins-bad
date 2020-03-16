@@ -256,7 +256,7 @@ gst_msdk_set_video_alignment (GstVideoInfo * info, guint alloc_w, guint alloc_h,
     alignment->stride_align[i] = stride_align;
 
   alignment->padding_right = GST_ROUND_UP_16 (alloc_w) - width;
-  alignment->padding_bottom = GST_ROUND_UP_32 (alloc_h) - height;
+  alignment->padding_bottom = GST_ROUND_UP_128 (alloc_h) - height;
 }
 
 static const struct map *
@@ -300,11 +300,11 @@ gst_msdk_set_mfx_frame_info_from_video_info (mfxFrameInfo * mfx_info,
 
   if (GST_VIDEO_INFO_N_PLANES (info) > 1)
     mfx_info->Height =
-        GST_ROUND_UP_32 (GST_VIDEO_INFO_COMP_OFFSET (info,
+        GST_ROUND_UP_128 (GST_VIDEO_INFO_COMP_OFFSET (info,
             1) / GST_VIDEO_INFO_COMP_STRIDE (info, 0));
   else
     mfx_info->Height =
-        GST_ROUND_UP_32 (GST_VIDEO_INFO_SIZE (info) /
+        GST_ROUND_UP_128 (GST_VIDEO_INFO_SIZE (info) /
         GST_VIDEO_INFO_COMP_STRIDE (info, 0));
 
   mfx_info->CropW = GST_VIDEO_INFO_WIDTH (info);

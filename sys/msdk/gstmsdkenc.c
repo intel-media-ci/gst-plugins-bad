@@ -416,7 +416,7 @@ gst_msdkenc_init_encoder (GstMsdkEnc * thiz)
           MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
 
     thiz->vpp_param.vpp.In.Width = GST_ROUND_UP_16 (info->width);
-    thiz->vpp_param.vpp.In.Height = GST_ROUND_UP_32 (info->height);
+    thiz->vpp_param.vpp.In.Height = GST_ROUND_UP_128 (info->height);
     thiz->vpp_param.vpp.In.CropW = info->width;
     thiz->vpp_param.vpp.In.CropH = info->height;
     thiz->vpp_param.vpp.In.FrameRateExtN = info->fps_n;
@@ -522,7 +522,7 @@ gst_msdkenc_init_encoder (GstMsdkEnc * thiz)
   thiz->param.mfx.EncodedOrder = 0;     /* Take input frames in display order */
 
   thiz->param.mfx.FrameInfo.Width = GST_ROUND_UP_16 (info->width);
-  thiz->param.mfx.FrameInfo.Height = GST_ROUND_UP_32 (info->height);
+  thiz->param.mfx.FrameInfo.Height = GST_ROUND_UP_128 (info->height);
   thiz->param.mfx.FrameInfo.CropW = info->width;
   thiz->param.mfx.FrameInfo.CropH = info->height;
   thiz->param.mfx.FrameInfo.FrameRateExtN = info->fps_n;

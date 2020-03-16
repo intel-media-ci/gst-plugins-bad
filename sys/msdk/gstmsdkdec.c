@@ -538,7 +538,7 @@ gst_msdkdec_set_src_caps (GstMsdkDec * thiz, gboolean need_allocation)
       GST_ROUND_UP_16 (thiz->param.mfx.FrameInfo.Width ? thiz->param.mfx.
       FrameInfo.Width : width);
   alloc_h =
-      GST_ROUND_UP_32 (thiz->param.mfx.FrameInfo.Height ? thiz->param.mfx.
+      GST_ROUND_UP_128 (thiz->param.mfx.FrameInfo.Height ? thiz->param.mfx.
       FrameInfo.Height : height);
 
   /* Ensure output_state->caps and info have same width and height
@@ -557,7 +557,7 @@ gst_msdkdec_set_src_caps (GstMsdkDec * thiz, gboolean need_allocation)
         GST_ROUND_UP_16 (thiz->param.mfx.FrameInfo.Width ? thiz->param.mfx.
         FrameInfo.Width : GST_VIDEO_INFO_WIDTH (&output_state->info));
     height =
-        GST_ROUND_UP_32 (thiz->param.mfx.FrameInfo.Height ? thiz->param.mfx.
+        GST_ROUND_UP_128 (thiz->param.mfx.FrameInfo.Height ? thiz->param.mfx.
         FrameInfo.Height : GST_VIDEO_INFO_HEIGHT (&output_state->info));
 
     /* set allocation width and height in allocation_caps,
@@ -1671,7 +1671,7 @@ gst_msdkdec_preinit_decoder (GstMsdkDec * decoder)
   decoder->param.mfx.FrameInfo.Width =
       GST_ROUND_UP_16 (decoder->param.mfx.FrameInfo.Width);
   decoder->param.mfx.FrameInfo.Height =
-      GST_ROUND_UP_32 (decoder->param.mfx.FrameInfo.Height);
+      GST_ROUND_UP_128 (decoder->param.mfx.FrameInfo.Height);
 
   decoder->param.mfx.FrameInfo.PicStruct =
       decoder->param.mfx.FrameInfo.PicStruct ? decoder->param.mfx.
