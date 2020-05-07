@@ -1431,7 +1431,7 @@ gst_h265_parser_identify_nalu_unchecked (GstH265Parser * parser,
   if (!gst_h265_parse_nalu_header (nalu)) {
     GST_WARNING ("error parsing \"NAL unit header\"");
     nalu->size = 0;
-    return GST_H265_PARSER_BROKEN_DATA;
+    return GST_H265_PARSER_NO_NAL_END;
   }
 
   nalu->valid = TRUE;
