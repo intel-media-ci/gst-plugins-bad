@@ -176,6 +176,25 @@ gst_msdkenc_adaptive_b_get_type (void)
   return type;
 }
 
+GType
+gst_msdkenc_tune_mode_get_type (void)
+{
+  static GType type = 0;
+
+  static const GEnumValue values[] = {
+    {MFX_CODINGOPTION_UNKNOWN, "SDK decides what to do ", "auto"},
+    {MFX_CODINGOPTION_OFF, "Disable low power mode ", "off"},
+    {MFX_CODINGOPTION_ON, "Enable low power mode ", "on"},
+    {0, NULL, NULL}
+  };
+
+  if (!type) {
+    type = g_enum_register_static ("GstMsdkEncTuneMode", values);
+  }
+
+  return type;
+}
+
 /*========= MSDK VPP Enums =========================*/
 
 #ifndef GST_REMOVE_DEPRECATED
