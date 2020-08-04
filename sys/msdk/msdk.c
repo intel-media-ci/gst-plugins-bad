@@ -483,6 +483,7 @@ gboolean
 gst_msdk_load_plugin (mfxSession session, const mfxPluginUID * uid,
     mfxU32 version, const gchar * plugin)
 {
+#if (MFX_VERSION < 1028)
   mfxStatus status;
 
   status = MFXVideoUSER_Load (session, uid, version);
@@ -497,6 +498,7 @@ gst_msdk_load_plugin (mfxSession session, const mfxPluginUID * uid,
     GST_WARNING ("Media SDK Plugin for %s load warning: %s", plugin,
         msdk_status_to_string (status));
   }
+#endif
 
   return TRUE;
 }
