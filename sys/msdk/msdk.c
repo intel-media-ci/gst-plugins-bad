@@ -123,10 +123,6 @@ msdk_status_to_string (mfxStatus status)
       return "device operation failure";
     case MFX_ERR_MORE_BITSTREAM:
       return "expect more bitstream buffers at output";
-    case MFX_ERR_INCOMPATIBLE_AUDIO_PARAM:
-      return "incompatible audio parameters";
-    case MFX_ERR_INVALID_AUDIO_PARAM:
-      return "invalid audio parameters";
       /* warnings >0 */
     case MFX_WRN_IN_EXECUTION:
       return "the previous asynchronous operation is in execution";
@@ -144,8 +140,6 @@ msdk_status_to_string (mfxStatus status)
       return "the value is out of valid range";
     case MFX_WRN_FILTER_SKIPPED:
       return "one of requested filters has been skipped";
-    case MFX_WRN_INCOMPATIBLE_AUDIO_PARAM:
-      return "incompatible audio parameters";
     default:
       break;
   }
