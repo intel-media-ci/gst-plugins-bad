@@ -341,6 +341,7 @@ typedef enum
  * @GST_H265_SEI_PIC_TIMING: Picture Timing SEI Message
  * @GST_H265_SEI_REGISTERED_USER_DATA: Registered user data (D.2.5)
  * @GST_H265_SEI_RECOVERY_POINT: Recovery Point SEI Message (D.3.8)
+ * @GST_H265_SEI_ACTIVE_PARAMETER_SETS: Active parameter sets (D.3.21) (Since: 1.20)
  * @GST_H265_SEI_TIME_CODE: Time code SEI message (D.2.27) (Since: 1.16)
  * @GST_H265_SEI_MASTERING_DISPLAY_COLOUR_VOLUME: Mastering display colour volume information SEI message (D.2.28) (Since: 1.18)
  * @GST_H265_SEI_CONTENT_LIGHT_LEVEL: Content light level information SEI message (D.2.35) (Since: 1.18)
@@ -354,6 +355,7 @@ typedef enum
   GST_H265_SEI_PIC_TIMING = 1,
   GST_H265_SEI_REGISTERED_USER_DATA = 4,
   GST_H265_SEI_RECOVERY_POINT = 6,
+  GST_H265_SEI_ACTIVE_PARAMETER_SETS = 129,
   GST_H265_SEI_TIME_CODE = 136,
   GST_H265_SEI_MASTERING_DISPLAY_COLOUR_VOLUME = 137,
   GST_H265_SEI_CONTENT_LIGHT_LEVEL = 144,
@@ -451,6 +453,7 @@ typedef struct _GstH265RecoveryPoint            GstH265RecoveryPoint;
 typedef struct _GstH265TimeCode                 GstH265TimeCode;
 typedef struct _GstH265MasteringDisplayColourVolume GstH265MasteringDisplayColourVolume;
 typedef struct _GstH265ContentLightLevel        GstH265ContentLightLevel;
+typedef struct _GstH265ActiveParameterSets      GstH265ActiveParameterSets;
 typedef struct _GstH265SEIMessage               GstH265SEIMessage;
 
 /**
@@ -1102,6 +1105,7 @@ struct _GstH265SPS
 {
   guint8 id;
 
+  guint8 vps_id;
   GstH265VPS *vps;
 
   guint8 max_sub_layers_minus1;
@@ -1201,6 +1205,7 @@ struct _GstH265PPS
 {
   guint id;
 
+  gint sps_id;
   GstH265SPS *sps;
 
   guint8 dependent_slice_segments_enabled_flag;
@@ -1595,6 +1600,26 @@ struct _GstH265ContentLightLevel
   guint16 max_pic_average_light_level;
 };
 
+/**
+ * _GstH265ActiveParameterSets:
+ * The active parameter sets SEI message indicates which VPS is active for the
+ * VCL NAL units of the access unit associated with the SEI message.
+ *
+ * D.3.21
+ *
+ * Since: 1.20
+ */
+struct _GstH265ActiveParameterSets
+{
+  guint8 active_video_parameter_set_id;
+  guint8 self_contained_cvs_flag;
+  guint8 no_parameter_set_update_flag;
+  guint num_sps_ids_minus1;
+  guint8 active_seq_parameter_set_id[GST_H265_MAX_SPS_COUNT];
+  /* MaxLayersMinus1 is set equal to Min( 62, vps_max_layers_minus1 ). */
+  guint8 layer_sps_idx[63];
+};
+
 struct _GstH265SEIMessage
 {
   GstH265SEIPayloadType payloadType;
@@ -1607,6 +1632,7 @@ struct _GstH265SEIMessage
     GstH265TimeCode time_code;
     GstH265MasteringDisplayColourVolume mastering_display_colour_volume;
     GstH265ContentLightLevel content_light_level;
+    GstH265ActiveParameterSets active_parameter_sets;
     /* ... could implement more */
   } payload;
 };
@@ -1622,9 +1648,10 @@ struct _GstH265Parser
   GstH265VPS vps[GST_H265_MAX_VPS_COUNT];
   GstH265SPS sps[GST_H265_MAX_SPS_COUNT];
   GstH265PPS pps[GST_H265_MAX_PPS_COUNT];
-  GstH265VPS *last_vps;
-  GstH265SPS *last_sps;
-  GstH265PPS *last_pps;
+
+  GstH265VPS *active_vps;
+  GstH265SPS *active_sps;
+  GstH265PPS *active_pps;
 };
 
 GST_CODEC_PARSERS_API
@@ -1681,18 +1708,6 @@ GST_CODEC_PARSERS_API
 GstH265ParserResult gst_h265_parser_parse_sei       (GstH265Parser   * parser,
                                                      GstH265NalUnit  * nalu,
                                                      GArray **messages);
-
-GST_CODEC_PARSERS_API
-GstH265ParserResult gst_h265_parser_update_vps      (GstH265Parser   * parser,
-                                                     GstH265VPS      * vps);
-
-GST_CODEC_PARSERS_API
-GstH265ParserResult gst_h265_parser_update_sps      (GstH265Parser   * parser,
-                                                     GstH265SPS      * sps);
-
-GST_CODEC_PARSERS_API
-GstH265ParserResult gst_h265_parser_update_pps      (GstH265Parser   * parser,
-                                                     GstH265PPS      * pps);
 
 GST_CODEC_PARSERS_API
 void                gst_h265_parser_free            (GstH265Parser  * parser);

@@ -294,10 +294,6 @@ gst_h265_decoder_parse_sps (GstH265Decoder * self, GstH265NalUnit * nalu)
   ret = gst_h265_decoder_process_sps (self, &sps);
   if (!ret) {
     GST_WARNING_OBJECT (self, "Failed to process SPS");
-  } else if (gst_h265_parser_update_sps (priv->parser,
-          &sps) != GST_H265_PARSER_OK) {
-    GST_WARNING_OBJECT (self, "Failed to update SPS");
-    ret = FALSE;
   }
 
   return ret;

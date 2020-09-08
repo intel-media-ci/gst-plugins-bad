@@ -229,6 +229,195 @@ gst_h265_parser_get_pps (GstH265Parser * parser, guint8 pps_id)
   return NULL;
 }
 
+static GstH265ParserResult
+gst_h265_parse_activate_vps (GstH265Parser * parser, guint vps_id)
+{
+  /* Reset sps and pps which depends on active vps */
+  parser->active_sps = NULL;
+  parser->active_pps = NULL;
+
+  parser->active_vps = gst_h265_parser_get_vps (parser, vps_id);
+
+  if (parser->active_vps)
+    GST_LOG ("Activated VPS %d", parser->active_vps->id);
+  return GST_H265_PARSER_OK;
+}
+
+static GstH265ParserResult
+gst_h265_parse_activate_sps (GstH265Parser * parser, guint sps_id)
+{
+  GstH265SPS *sps;
+  GstH265VPS *vps;
+
+  parser->active_sps = NULL;
+  /* Reset pps which depends on active sps */
+  parser->active_pps = NULL;
+
+  sps = gst_h265_parser_get_sps (parser, sps_id);
+  if (!sps) {
+    GST_WARNING ("couldn't find associated sequence parameter set with id: %d",
+        sps_id);
+    return GST_H265_PARSER_BROKEN_LINK;
+  }
+
+  gst_h265_parse_activate_vps (parser, sps->vps_id);
+  vps = gst_h265_parser_get_vps (parser, sps->vps_id);
+  sps->vps = vps;
+  if (!vps) {
+    /* No VPS is allowed */
+    GST_DEBUG ("couldn't find associated video parameter set with id: %d",
+        sps->vps_id);
+    goto done;
+  }
+
+  /* Update the frame rate if no VUI info */
+  if (!sps->vui_params.timing_info_present_flag &&
+      vps && vps->timing_info_present_flag) {
+    sps->fps_num = vps->time_scale;
+    sps->fps_den = vps->num_units_in_tick;
+    GST_LOG ("framerate %d/%d in VPS", sps->fps_num, sps->fps_den);
+  }
+
+  if (sps->fps_num == 0 && sps->fps_den == 1)
+    GST_LOG ("unknown framerate");
+
+done:
+  GST_LOG ("Activated SPS %d", sps->id);
+  parser->active_sps = sps;
+  return GST_H265_PARSER_OK;
+}
+
+static GstH265ParserResult
+gst_h265_parse_activate_pps (GstH265Parser * parser, guint pps_id)
+{
+  GstH265PPS *pps;
+  GstH265SPS *sps;
+  gint qp_bd_offset;
+  guint32 CtbSizeY, MinCbLog2SizeY, CtbLog2SizeY, MaxBitDepthY, MaxBitDepthC;
+  GstH265ParserResult ret;
+
+  parser->active_pps = NULL;
+
+  pps = gst_h265_parser_get_pps (parser, pps_id);
+  if (!pps) {
+    GST_WARNING
+        ("couldn't find associated picture parameter set with id: %d", pps_id);
+    return GST_H265_PARSER_BROKEN_LINK;
+  }
+
+  ret = gst_h265_parse_activate_sps (parser, pps->sps_id);
+  if (ret != GST_H265_PARSER_OK) {
+    GST_WARNING ("could not activate sps %d", pps->sps_id);
+    return ret;
+  }
+
+  sps = gst_h265_parser_get_sps (parser, pps->sps_id);
+  g_assert (sps);
+  g_assert (sps->id == pps->sps_id);
+
+  qp_bd_offset = 6 * sps->bit_depth_luma_minus8;
+
+  MinCbLog2SizeY = sps->log2_min_luma_coding_block_size_minus3 + 3;
+  CtbLog2SizeY = MinCbLog2SizeY + sps->log2_diff_max_min_luma_coding_block_size;
+  CtbSizeY = 1 << CtbLog2SizeY;
+  pps->PicHeightInCtbsY =
+      ceil ((gdouble) sps->pic_height_in_luma_samples / (gdouble) CtbSizeY);
+  pps->PicWidthInCtbsY =
+      ceil ((gdouble) sps->pic_width_in_luma_samples / (gdouble) CtbSizeY);
+
+  CHECK_ALLOWED (pps->init_qp_minus26, -(26 + qp_bd_offset), 25);
+
+  if (pps->cu_qp_delta_enabled_flag)
+    CHECK_ALLOWED_MAX (pps->diff_cu_qp_delta_depth,
+        sps->log2_diff_max_min_luma_coding_block_size);
+
+  if (pps->tiles_enabled_flag) {
+    CHECK_ALLOWED_MAX (pps->num_tile_columns_minus1, pps->PicWidthInCtbsY - 1);
+    CHECK_ALLOWED_MAX (pps->num_tile_rows_minus1, pps->PicHeightInCtbsY - 1);
+  }
+
+  /* 6.5.1, 6-4, 6-5, 7.4.3.3.1 */
+  if (pps->uniform_spacing_flag) {
+    guint8 num_col = pps->num_tile_columns_minus1 + 1;
+    guint8 num_row = pps->num_tile_rows_minus1 + 1;
+    guint i;
+
+    for (i = 0; i < num_col; i++) {
+      pps->column_width_minus1[i] =
+          ((i + 1) * pps->PicWidthInCtbsY / num_col
+          - i * pps->PicWidthInCtbsY / num_col) - 1;
+    }
+    for (i = 0; i < num_row; i++) {
+      pps->row_height_minus1[i] =
+          ((i + 1) * pps->PicHeightInCtbsY / num_row
+          - i * pps->PicHeightInCtbsY / num_row) - 1;
+    }
+  } else {
+    pps->column_width_minus1[pps->num_tile_columns_minus1] =
+        pps->PicWidthInCtbsY - 1;
+    pps->row_height_minus1[pps->num_tile_rows_minus1] =
+        pps->PicHeightInCtbsY - 1;
+  }
+
+  if (pps->pps_range_extension_flag) {
+    if (pps->pps_extension_params.chroma_qp_offset_list_enabled_flag) {
+      CHECK_ALLOWED_MAX
+          (pps->pps_extension_params.diff_cu_chroma_qp_offset_depth,
+          sps->log2_diff_max_min_luma_coding_block_size);
+    }
+  }
+
+  if (pps->pps_range_extension_flag) {
+    MaxBitDepthY =
+        sps->bit_depth_luma_minus8 > 2 ? sps->bit_depth_luma_minus8 - 2 : 0;
+    MaxBitDepthC =
+        sps->bit_depth_chroma_minus8 > 2 ? sps->bit_depth_chroma_minus8 - 2 : 0;
+    CHECK_ALLOWED_MAX (pps->pps_extension_params.log2_sao_offset_scale_luma,
+        MaxBitDepthY);
+    CHECK_ALLOWED_MAX (pps->pps_extension_params.log2_sao_offset_scale_chroma,
+        MaxBitDepthC);
+  }
+
+  if (pps->pps_scc_extension_flag) {
+    if (pps->pps_scc_extension_params.
+        pps_palette_predictor_initializers_present_flag) {
+      CHECK_ALLOWED_MAX (pps->
+          pps_scc_extension_params.pps_num_palette_predictor_initializer,
+          sps->sps_scc_extension_params.palette_max_size +
+          sps->sps_scc_extension_params.delta_palette_max_predictor_size);
+      if (pps->pps_scc_extension_params.pps_num_palette_predictor_initializer >
+          0) {
+        /* It is a requirement of bitstream conformance that the value of
+           luma_bit_depth_entry_minus8 shall be equal to the value of
+           bit_depth_luma_minus8 */
+        CHECK_ALLOWED (pps->
+            pps_scc_extension_params.luma_bit_depth_entry_minus8,
+            sps->bit_depth_luma_minus8, sps->bit_depth_luma_minus8);
+
+        if (!pps->pps_scc_extension_params.monochrome_palette_flag) {
+          /* It is a requirement of bitstream conformance that the value
+             of chroma_bit_depth_entry_minus8 shall be equal to the value
+             of bit_depth_chroma_minus8. */
+          CHECK_ALLOWED (pps->
+              pps_scc_extension_params.chroma_bit_depth_entry_minus8,
+              sps->bit_depth_chroma_minus8, sps->bit_depth_chroma_minus8);
+        }
+      }
+    }
+  }
+
+  pps->sps = sps;
+  parser->active_pps = pps;
+  GST_LOG ("Activated PPS %d", pps->id);
+  return GST_H265_PARSER_OK;
+
+error:
+  pps->sps = NULL;
+  GST_WARNING ("Failed to set SPS %d for PPS %d", sps->id, pps->id);
+  return GST_H265_PARSER_ERROR;
+}
+
+
 static gboolean
 gst_h265_parse_nalu_header (GstH265NalUnit * nalu)
 {
@@ -1085,17 +1274,18 @@ static GstH265ParserResult
 gst_h265_parser_parse_pic_timing (GstH265Parser * parser,
     GstH265PicTiming * tim, NalReader * nr)
 {
-  GstH265ProfileTierLevel *profile_tier_level;
+  const GstH265ProfileTierLevel *profile_tier_level;
+  GstH265SPS *sps = parser->active_sps;
   guint i;
 
   GST_DEBUG ("parsing \"Picture timing\"");
-  if (!parser->last_sps || !parser->last_sps->valid) {
+  if (!sps) {
     GST_WARNING ("didn't get the associated sequence parameter set for the "
         "current access unit");
     goto error;
   }
 
-  profile_tier_level = &parser->last_sps->profile_tier_level;
+  profile_tier_level = &sps->profile_tier_level;
 
   /* set default values */
   if (!profile_tier_level->progressive_source_flag
@@ -1107,8 +1297,8 @@ gst_h265_parser_parse_pic_timing (GstH265Parser * parser,
   else
     tim->source_scan_type = 2;
 
-  if (parser->last_sps->vui_parameters_present_flag) {
-    GstH265VUIParams *vui = &parser->last_sps->vui_params;
+  if (sps->vui_parameters_present_flag) {
+    const GstH265VUIParams *vui = &sps->vui_params;
 
     if (vui->frame_field_info_present_flag) {
       READ_UINT8 (nr, tim->pic_struct, 4);
@@ -1120,7 +1310,7 @@ gst_h265_parser_parse_pic_timing (GstH265Parser * parser,
     }
 
     if (vui->hrd_parameters_present_flag) {
-      GstH265HRDParams *hrd = &vui->hrd_params;
+      const GstH265HRDParams *hrd = &vui->hrd_params;
 
       READ_UINT8 (nr, tim->au_cpb_removal_delay_minus1,
           (hrd->au_cpb_removal_delay_length_minus1 + 1));
@@ -1167,7 +1357,7 @@ static GstH265ParserResult
 gst_h265_parser_parse_recovery_point (GstH265Parser * parser,
     GstH265RecoveryPoint * rp, NalReader * nr)
 {
-  GstH265SPS *const sps = parser->last_sps;
+  GstH265SPS *const sps = parser->active_sps;
   gint32 max_pic_order_cnt_lsb;
 
   GST_DEBUG ("parsing \"Recovery point\"");
@@ -1337,6 +1527,67 @@ gst_h265_parser_parse_content_light_level_info (GstH265Parser * parser,
 
 error:
   GST_WARNING ("error parsing \"Content light level\"");
+  return GST_H265_PARSER_ERROR;
+}
+
+static GstH265ParserResult
+gst_h265_parser_parse_active_parameter_sets (GstH265Parser * parser,
+    GstH265ActiveParameterSets * aps, NalReader * nr)
+{
+  guint i;
+  GstH265VPS *vps;
+  GstH265SPS *sps;
+
+  GST_DEBUG ("parsing \"Content light level\"");
+
+  READ_UINT8 (nr, aps->active_video_parameter_set_id, 4);
+  CHECK_ALLOWED (aps->active_video_parameter_set_id, 0, 15);
+
+  READ_UINT8 (nr, aps->self_contained_cvs_flag, 1);
+  READ_UINT8 (nr, aps->no_parameter_set_update_flag, 1);
+
+  READ_UE_MAX (nr, aps->num_sps_ids_minus1, GST_H265_MAX_SPS_COUNT - 1);
+  for (i = 0; i <= aps->num_sps_ids_minus1; i++)
+    READ_UE_MAX (nr, aps->active_seq_parameter_set_id[i],
+        GST_H265_MAX_SPS_COUNT);
+
+  vps = gst_h265_parser_get_vps (parser, aps->active_video_parameter_set_id);
+  if (!vps) {
+    GST_WARNING ("failed to find the active vps %d",
+        aps->active_video_parameter_set_id);
+    goto error;
+  }
+
+  /* MaxLayersMinus1 is set equal to Min( 62, vps_max_layers_minus1 ). */
+  for (i = vps->base_layer_internal_flag;
+      i <= MIN (62, vps->max_layers_minus1); i++)
+    READ_UE_MAX (nr, aps->layer_sps_idx[i], 255);
+
+  if (vps->base_layer_internal_flag && vps->base_layer_available_flag) {
+    sps = gst_h265_parser_get_sps (parser, aps->active_seq_parameter_set_id[0]);
+    if (!sps) {
+      GST_WARNING ("failed to find the sps %d to active",
+          aps->active_seq_parameter_set_id[0]);
+      goto error;
+    }
+    if (sps->vps_id != vps->id) {
+      GST_WARNING ("the active sps %d use vps %d, not the active vps %d",
+          aps->active_seq_parameter_set_id[0], sps->vps_id, vps->id);
+      goto error;
+    }
+
+    if (gst_h265_parse_activate_sps (parser,
+            aps->active_seq_parameter_set_id[0]) != GST_H265_PARSER_OK) {
+      GST_WARNING ("failed to active sps %d",
+          aps->active_seq_parameter_set_id[0]);
+      goto error;
+    }
+  }
+
+  return GST_H265_PARSER_OK;
+
+error:
+  GST_WARNING ("error parsing \"Active Parameter Sets\"");
   return GST_H265_PARSER_ERROR;
 }
 
@@ -1619,7 +1870,12 @@ gst_h265_parser_parse_vps (GstH265Parser * parser, GstH265NalUnit * nalu,
     GST_DEBUG ("adding video parameter set with id: %d to array", vps->id);
 
     parser->vps[vps->id] = *vps;
-    parser->last_vps = &parser->vps[vps->id];
+
+    if (parser->active_vps && parser->active_vps->id == vps->id) {
+      parser->active_vps = NULL;
+      parser->active_sps = NULL;
+      parser->active_pps = NULL;
+    }
   }
 
   return res;
@@ -1789,7 +2045,11 @@ gst_h265_parser_parse_sps (GstH265Parser * parser, GstH265NalUnit * nalu,
     GST_DEBUG ("adding sequence parameter set with id: %d to array", sps->id);
 
     parser->sps[sps->id] = *sps;
-    parser->last_sps = &parser->sps[sps->id];
+
+    if (parser->active_sps && parser->active_sps->id == sps->id) {
+      parser->active_sps = NULL;
+      parser->active_pps = NULL;
+    }
   }
 
   return res;
@@ -1811,8 +2071,6 @@ gst_h265_parse_sps (GstH265Parser * parser, GstH265NalUnit * nalu,
     GstH265SPS * sps, gboolean parse_vui_params)
 {
   NalReader nr;
-  GstH265VPS *vps;
-  guint8 vps_id;
   guint i;
   guint subwc[] = { 1, 2, 2, 1, 1 };
   guint subhc[] = { 1, 2, 1, 1, 1 };
@@ -1825,14 +2083,7 @@ gst_h265_parse_sps (GstH265Parser * parser, GstH265NalUnit * nalu,
 
   memset (sps, 0, sizeof (*sps));
 
-  READ_UINT8 (&nr, vps_id, 4);
-  vps = gst_h265_parser_get_vps (parser, vps_id);
-  if (!vps) {
-    GST_DEBUG ("couldn't find associated video parameter set with id: %d",
-        vps_id);
-  }
-  sps->vps = vps;
-
+  READ_UINT8 (&nr, sps->vps_id, 4);
   READ_UINT8 (&nr, sps->max_sub_layers_minus1, 3);
   READ_UINT8 (&nr, sps->temporal_id_nesting_flag, 1);
 
@@ -2064,12 +2315,6 @@ done:
       sps->fps_den = vui->num_units_in_tick;
       GST_LOG ("framerate %d/%d in VUI", sps->fps_num, sps->fps_den);
     }
-  } else if (vps && vps->timing_info_present_flag) {
-    sps->fps_num = vps->time_scale;
-    sps->fps_den = vps->num_units_in_tick;
-    GST_LOG ("framerate %d/%d in VPS", sps->fps_num, sps->fps_den);
-  } else {
-    GST_LOG ("No VUI, unknown framerate");
   }
 
   sps->valid = TRUE;
@@ -2097,10 +2342,6 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
     GstH265PPS * pps)
 {
   NalReader nr;
-  GstH265SPS *sps;
-  gint sps_id;
-  gint qp_bd_offset;
-  guint32 CtbSizeY, MinCbLog2SizeY, CtbLog2SizeY, MaxBitDepthY, MaxBitDepthC;
   guint8 i;
 
   GST_DEBUG ("parsing PPS");
@@ -2111,24 +2352,7 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
   memset (pps, 0, sizeof (*pps));
 
   READ_UE_MAX (&nr, pps->id, GST_H265_MAX_PPS_COUNT - 1);
-  READ_UE_MAX (&nr, sps_id, GST_H265_MAX_SPS_COUNT - 1);
-
-  sps = gst_h265_parser_get_sps (parser, sps_id);
-  if (!sps) {
-    GST_WARNING ("couldn't find associated sequence parameter set with id: %d",
-        sps_id);
-    return GST_H265_PARSER_BROKEN_LINK;
-  }
-  pps->sps = sps;
-  qp_bd_offset = 6 * sps->bit_depth_luma_minus8;
-
-  MinCbLog2SizeY = sps->log2_min_luma_coding_block_size_minus3 + 3;
-  CtbLog2SizeY = MinCbLog2SizeY + sps->log2_diff_max_min_luma_coding_block_size;
-  CtbSizeY = 1 << CtbLog2SizeY;
-  pps->PicHeightInCtbsY =
-      ceil ((gdouble) sps->pic_height_in_luma_samples / (gdouble) CtbSizeY);
-  pps->PicWidthInCtbsY =
-      ceil ((gdouble) sps->pic_width_in_luma_samples / (gdouble) CtbSizeY);
+  READ_UE_MAX (&nr, pps->sps_id, GST_H265_MAX_SPS_COUNT - 1);
 
   /* set default values for fields that might not be present in the bitstream
      and have valid defaults */
@@ -2143,15 +2367,14 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
 
   READ_UE_MAX (&nr, pps->num_ref_idx_l0_default_active_minus1, 14);
   READ_UE_MAX (&nr, pps->num_ref_idx_l1_default_active_minus1, 14);
-  READ_SE_ALLOWED (&nr, pps->init_qp_minus26, -(26 + qp_bd_offset), 25);
+  READ_SE_ALLOWED (&nr, pps->init_qp_minus26, -128, 25);
 
   READ_UINT8 (&nr, pps->constrained_intra_pred_flag, 1);
   READ_UINT8 (&nr, pps->transform_skip_enabled_flag, 1);
 
   READ_UINT8 (&nr, pps->cu_qp_delta_enabled_flag, 1);
   if (pps->cu_qp_delta_enabled_flag)
-    READ_UE_MAX (&nr, pps->diff_cu_qp_delta_depth,
-        sps->log2_diff_max_min_luma_coding_block_size);
+    READ_UE_MAX (&nr, pps->diff_cu_qp_delta_depth, 255);
 
   READ_SE_ALLOWED (&nr, pps->cb_qp_offset, -12, 12);
   READ_SE_ALLOWED (&nr, pps->cr_qp_offset, -12, 12);
@@ -2164,10 +2387,8 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
   READ_UINT8 (&nr, pps->entropy_coding_sync_enabled_flag, 1);
 
   if (pps->tiles_enabled_flag) {
-    READ_UE_ALLOWED (&nr,
-        pps->num_tile_columns_minus1, 0, pps->PicWidthInCtbsY - 1);
-    READ_UE_ALLOWED (&nr,
-        pps->num_tile_rows_minus1, 0, pps->PicHeightInCtbsY - 1);
+    READ_UE_ALLOWED (&nr, pps->num_tile_columns_minus1, 0, 255);
+    READ_UE_ALLOWED (&nr, pps->num_tile_rows_minus1, 0, 255);
 
     if (pps->num_tile_columns_minus1 + 1 >
         G_N_ELEMENTS (pps->column_width_minus1)) {
@@ -2185,29 +2406,14 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
     READ_UINT8 (&nr, pps->uniform_spacing_flag, 1);
     /* 6.5.1, 6-4, 6-5, 7.4.3.3.1 */
     if (pps->uniform_spacing_flag) {
-      guint8 num_col = pps->num_tile_columns_minus1 + 1;
-      guint8 num_row = pps->num_tile_rows_minus1 + 1;
-      for (i = 0; i < num_col; i++) {
-        pps->column_width_minus1[i] =
-            ((i + 1) * pps->PicWidthInCtbsY / num_col
-            - i * pps->PicWidthInCtbsY / num_col) - 1;
-      }
-      for (i = 0; i < num_row; i++) {
-        pps->row_height_minus1[i] =
-            ((i + 1) * pps->PicHeightInCtbsY / num_row
-            - i * pps->PicHeightInCtbsY / num_row) - 1;
-      }
+      /* We calculate the column_width/row_height later */
     } else {
-      pps->column_width_minus1[pps->num_tile_columns_minus1] =
-          pps->PicWidthInCtbsY - 1;
       for (i = 0; i < pps->num_tile_columns_minus1; i++) {
         READ_UE (&nr, pps->column_width_minus1[i]);
         pps->column_width_minus1[pps->num_tile_columns_minus1] -=
             (pps->column_width_minus1[i] + 1);
       }
 
-      pps->row_height_minus1[pps->num_tile_rows_minus1] =
-          pps->PicHeightInCtbsY - 1;
       for (i = 0; i < pps->num_tile_rows_minus1; i++) {
         READ_UE (&nr, pps->row_height_minus1[i]);
         pps->row_height_minus1[pps->num_tile_rows_minus1] -=
@@ -2234,8 +2440,7 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
   if (pps->scaling_list_data_present_flag)
     if (!gst_h265_parser_parse_scaling_lists (&nr, &pps->scaling_list, FALSE))
       goto error;
-  if (sps->scaling_list_enabled_flag && !sps->scaling_list_data_present_flag
-      && !pps->scaling_list_data_present_flag)
+  if (!pps->scaling_list_data_present_flag)
     if (!gst_h265_parser_parse_scaling_lists (&nr, &pps->scaling_list, TRUE))
       goto error;
 
@@ -2262,8 +2467,7 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
         pps->pps_extension_params.chroma_qp_offset_list_enabled_flag, 1);
     if (pps->pps_extension_params.chroma_qp_offset_list_enabled_flag) {
       READ_UE_MAX (&nr,
-          pps->pps_extension_params.diff_cu_chroma_qp_offset_depth,
-          sps->log2_diff_max_min_luma_coding_block_size);
+          pps->pps_extension_params.diff_cu_chroma_qp_offset_depth, 255);
       READ_UE_MAX (&nr,
           pps->pps_extension_params.chroma_qp_offset_list_len_minus1, 5);
       for (i = 0;
@@ -2275,15 +2479,10 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
             -12, 12);
       }
     }
-    MaxBitDepthY =
-        sps->bit_depth_luma_minus8 > 2 ? sps->bit_depth_luma_minus8 - 2 : 0;
-    MaxBitDepthC =
-        sps->bit_depth_chroma_minus8 > 2 ? sps->bit_depth_chroma_minus8 - 2 : 0;
-    READ_UE_ALLOWED (&nr, pps->pps_extension_params.log2_sao_offset_scale_luma,
-        0, MaxBitDepthY);
-    READ_UE_ALLOWED (&nr,
-        pps->pps_extension_params.log2_sao_offset_scale_chroma, 0,
-        MaxBitDepthC);
+    READ_UE_MAX (&nr, pps->pps_extension_params.log2_sao_offset_scale_luma,
+        255);
+    READ_UE_MAX (&nr, pps->pps_extension_params.log2_sao_offset_scale_chroma,
+        255);
   }
 
   if (pps->pps_multilayer_extension_flag) {
@@ -2322,28 +2521,18 @@ gst_h265_parse_pps (GstH265Parser * parser, GstH265NalUnit * nalu,
         pps_palette_predictor_initializers_present_flag) {
       READ_UE_MAX (&nr,
           pps->pps_scc_extension_params.pps_num_palette_predictor_initializer,
-          sps->sps_scc_extension_params.palette_max_size +
-          sps->sps_scc_extension_params.delta_palette_max_predictor_size);
+          255);
       if (pps->pps_scc_extension_params.pps_num_palette_predictor_initializer >
           0) {
         guint comp;
 
         READ_UINT8 (&nr, pps->pps_scc_extension_params.monochrome_palette_flag,
             1);
-        /* It is a requirement of bitstream conformance that the value of
-           luma_bit_depth_entry_minus8 shall be equal to the value of
-           bit_depth_luma_minus8 */
-        READ_UE_ALLOWED (&nr,
-            pps->pps_scc_extension_params.luma_bit_depth_entry_minus8,
-            sps->bit_depth_luma_minus8, sps->bit_depth_luma_minus8);
-        if (!pps->pps_scc_extension_params.monochrome_palette_flag) {
-          /* It is a requirement of bitstream conformance that the value
-             of chroma_bit_depth_entry_minus8 shall be equal to the value
-             of bit_depth_chroma_minus8. */
-          READ_UE_ALLOWED (&nr,
-              pps->pps_scc_extension_params.chroma_bit_depth_entry_minus8,
-              sps->bit_depth_chroma_minus8, sps->bit_depth_chroma_minus8);
-        }
+        READ_UE_MAX (&nr,
+            pps->pps_scc_extension_params.luma_bit_depth_entry_minus8, 255);
+        if (!pps->pps_scc_extension_params.monochrome_palette_flag)
+          READ_UE (&nr,
+              pps->pps_scc_extension_params.chroma_bit_depth_entry_minus8);
 
         for (comp = 0; comp <
             (pps->pps_scc_extension_params.monochrome_palette_flag ? 1 : 3);
@@ -2394,7 +2583,10 @@ gst_h265_parser_parse_pps (GstH265Parser * parser,
     GST_DEBUG ("adding picture parameter set with id: %d to array", pps->id);
 
     parser->pps[pps->id] = *pps;
-    parser->last_pps = &parser->pps[pps->id];
+
+    if (parser->active_pps && parser->active_pps->id == pps->id) {
+      parser->active_pps = NULL;
+    }
   }
 
   return res;
@@ -2444,21 +2636,25 @@ gst_h265_parser_parse_slice_hdr (GstH265Parser * parser,
     READ_UINT8 (&nr, slice->no_output_of_prior_pics_flag, 1);
 
   READ_UE_MAX (&nr, pps_id, GST_H265_MAX_PPS_COUNT - 1);
-  pps = gst_h265_parser_get_pps (parser, pps_id);
-  if (!pps) {
-    GST_WARNING
-        ("couldn't find associated picture parameter set with id: %d", pps_id);
-    return GST_H265_PARSER_BROKEN_LINK;
+
+  if (parser->active_pps && pps_id == parser->active_pps->id) {
+    pps = parser->active_pps;
+  } else {
+    GstH265ParserResult ret;
+    ret = gst_h265_parse_activate_pps (parser, pps_id);
+    if (ret != GST_H265_PARSER_OK) {
+      GST_WARNING
+          ("couldn't active picture parameter set id: %d used by slice hdr",
+          pps_id);
+      return ret;
+    }
+    pps = gst_h265_parser_get_pps (parser, pps_id);
   }
 
+  g_assert (pps);
   slice->pps = pps;
   sps = pps->sps;
-  if (!sps) {
-    GST_WARNING
-        ("couldn't find associated sequence parameter set with id: %d",
-        pps->id);
-    return GST_H265_PARSER_BROKEN_LINK;
-  }
+  g_assert (sps);
 
   PicSizeInCtbsY = pps->PicWidthInCtbsY * pps->PicHeightInCtbsY;
   /* set default values for fields that might not be present in the bitstream
@@ -2789,6 +2985,10 @@ gst_h265_parser_parse_sei_message (GstH265Parser * parser,
         res = gst_h265_parser_parse_content_light_level_info (parser,
             &sei->payload.content_light_level, nr);
         break;
+      case GST_H265_SEI_ACTIVE_PARAMETER_SETS:
+        res = gst_h265_parser_parse_active_parameter_sets (parser,
+            &sei->payload.active_parameter_sets, nr);
+        break;
       default:
         /* Just consume payloadSize bytes, which does not account for
            emulation prevention bytes */
@@ -2998,126 +3198,6 @@ gst_h265_parser_parse_sei (GstH265Parser * nalparser, GstH265NalUnit * nalu,
   } while (nal_reader_has_more_data (&nr));
 
   return res;
-}
-
-/**
- * gst_h265_parser_update_vps:
- * @parser: a #GstH265Parser
- * @vps: (transfer none): a #GstH265VPS.
- *
- * Replace internal Video Parameter Set struct corresponding to id of @vps
- * with @vps. @nalparser will mark @vps as last parsed vps.
- *
- * Returns: a #GstH265ParserResult
- *
- * Since: 1.18
- */
-GstH265ParserResult
-gst_h265_parser_update_vps (GstH265Parser * parser, GstH265VPS * vps)
-{
-  g_return_val_if_fail (parser != NULL, GST_H265_PARSER_ERROR);
-  g_return_val_if_fail (vps != NULL, GST_H265_PARSER_ERROR);
-  g_return_val_if_fail (vps->id < GST_H265_MAX_VPS_COUNT,
-      GST_H265_PARSER_ERROR);
-
-  if (!vps->valid) {
-    GST_WARNING ("Cannot update with invalid VPS");
-    return GST_H265_PARSER_ERROR;
-  }
-
-  GST_DEBUG ("Updating video parameter set with id: %d", vps->id);
-
-  parser->vps[vps->id] = *vps;
-  parser->last_vps = &parser->vps[vps->id];
-
-  return GST_H265_PARSER_OK;
-}
-
-/**
- * gst_h265_parser_update_sps:
- * @parser: a #GstH265Parser
- * @sps: (transfer none): a #GstH265SPS.
- *
- * Replace internal Sequence Parameter Set struct corresponding to id of @sps
- * with @sps. @nalparser will mark @sps as last parsed sps.
- *
- * Returns: a #GstH265ParserResult
- *
- * Since: 1.18
- */
-GstH265ParserResult
-gst_h265_parser_update_sps (GstH265Parser * parser, GstH265SPS * sps)
-{
-  g_return_val_if_fail (parser != NULL, GST_H265_PARSER_ERROR);
-  g_return_val_if_fail (sps != NULL, GST_H265_PARSER_ERROR);
-  g_return_val_if_fail (sps->id < GST_H265_MAX_SPS_COUNT,
-      GST_H265_PARSER_ERROR);
-
-  if (!sps->valid) {
-    GST_WARNING ("Cannot update with invalid SPS");
-    return GST_H265_PARSER_ERROR;
-  }
-
-  if (sps->vps) {
-    GstH265VPS *vps = gst_h265_parser_get_vps (parser, sps->vps->id);
-    if (!vps || vps != sps->vps) {
-      GST_WARNING ("Linked VPS is not identical to internal VPS");
-      return GST_H265_PARSER_BROKEN_LINK;
-    }
-  }
-
-  GST_DEBUG ("Updating sequence parameter set with id: %d", sps->id);
-
-  parser->sps[sps->id] = *sps;
-  parser->last_sps = &parser->sps[sps->id];
-
-  return GST_H265_PARSER_OK;
-}
-
-/**
- * gst_h265_parser_update_pps:
- * @parser: a #GstH265Parser
- * @pps: (transfer none): a #GstH265PPS.
- *
- * Replace internal Sequence Parameter Set struct corresponding to id of @pps
- * with @pps. @nalparser will mark @pps as last parsed sps.
- *
- * Returns: a #GstH265ParserResult
- *
- * Since: 1.18
- */
-GstH265ParserResult
-gst_h265_parser_update_pps (GstH265Parser * parser, GstH265PPS * pps)
-{
-  GstH265SPS *sps;
-
-  g_return_val_if_fail (parser != NULL, GST_H265_PARSER_ERROR);
-  g_return_val_if_fail (pps != NULL, GST_H265_PARSER_ERROR);
-  g_return_val_if_fail (pps->id < GST_H265_MAX_PPS_COUNT,
-      GST_H265_PARSER_ERROR);
-
-  if (!pps->valid) {
-    GST_WARNING ("Cannot update with invalid PPS");
-    return GST_H265_PARSER_ERROR;
-  }
-
-  if (!pps->sps) {
-    GST_WARNING ("No linked SPS struct");
-    return GST_H265_PARSER_BROKEN_LINK;
-  }
-
-  sps = gst_h265_parser_get_sps (parser, pps->sps->id);
-  if (!sps || sps != pps->sps) {
-    GST_WARNING ("Linked SPS is not identical to internal SPS");
-    return GST_H265_PARSER_BROKEN_LINK;
-  }
-
-  GST_DEBUG ("Updating picture parameter set with id: %d", pps->id);
-
-  parser->pps[pps->id] = *pps;
-  parser->last_pps = &parser->pps[pps->id];
-
-  return GST_H265_PARSER_OK;
 }
 
 /**

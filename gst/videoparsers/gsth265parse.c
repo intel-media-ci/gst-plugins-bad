@@ -755,11 +755,7 @@ gst_h265_parse_process_nal (GstH265Parse * h265parse, GstH265NalUnit * nalu)
       h265parse->header = TRUE;
       break;
     case GST_H265_NAL_SPS:
-      /* reset state, everything else is obsolete */
-      h265parse->state = 0;
-
       pres = gst_h265_parser_parse_sps (nalparser, nalu, &sps, TRUE);
-
 
       /* arranged for a fallback sps.id, so use that one and only warn */
       if (pres != GST_H265_PARSER_OK) {
@@ -793,13 +789,10 @@ gst_h265_parse_process_nal (GstH265Parse * h265parse, GstH265NalUnit * nalu)
       h265parse->state |= GST_H265_PARSE_STATE_GOT_SPS;
       break;
     case GST_H265_NAL_PPS:
-      /* expected state: got-sps */
-      h265parse->state &= GST_H265_PARSE_STATE_GOT_SPS;
       if (!GST_H265_PARSE_STATE_VALID (h265parse, GST_H265_PARSE_STATE_GOT_SPS))
         return FALSE;
 
       pres = gst_h265_parser_parse_pps (nalparser, nalu, &pps);
-
 
       /* arranged for a fallback pps.id, so use that one and only warn */
       if (pres != GST_H265_PARSER_OK) {
@@ -1451,7 +1444,7 @@ gst_h265_parse_make_codec_data (GstH265Parse * h265parse)
   if (!found)
     return NULL;
 
-  sps = h265parse->nalparser->last_sps;
+  sps = h265parse->nalparser->active_sps;
   if (!sps)
     return NULL;
 
@@ -1957,7 +1950,7 @@ gst_h265_parse_update_src_caps (GstH265Parse * h265parse, GstCaps * caps)
   else
     s = gst_caps_get_structure (sink_caps, 0);
 
-  sps = h265parse->nalparser->last_sps;
+  sps = h265parse->nalparser->active_sps;
   GST_DEBUG_OBJECT (h265parse, "sps: %p", sps);
 
   /* only codec-data for nice-and-clean au aligned packetized hevc format */
@@ -2341,7 +2334,7 @@ gst_h265_parse_parse_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
   gst_h265_parse_update_src_caps (h265parse, NULL);
 
   if (h265parse->fps_num > 0 && h265parse->fps_den > 0) {
-    GstH265SPS *sps = h265parse->nalparser->last_sps;
+    GstH265SPS *sps = h265parse->nalparser->active_sps;
     GstClockTime val;
 
     val = (sps != NULL && sps->profile_tier_level.interlaced_source_flag) ?
