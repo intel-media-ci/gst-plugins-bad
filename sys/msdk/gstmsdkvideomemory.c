@@ -121,6 +121,10 @@ gst_msdk_video_memory_release_surface (GstMemory * mem)
 
   if (GST_IS_MSDK_VIDEO_ALLOCATOR (mem->allocator)) {
     surface = GST_MSDK_VIDEO_MEMORY_CAST (mem)->surface;
+
+    if (!surface)
+      return;
+
     context = GST_MSDK_VIDEO_ALLOCATOR_CAST (mem->allocator)->context;
     alloc_response =
         GST_MSDK_VIDEO_ALLOCATOR_CAST (mem->allocator)->alloc_response;
@@ -128,6 +132,10 @@ gst_msdk_video_memory_release_surface (GstMemory * mem)
     surface =
         gst_mini_object_get_qdata (GST_MINI_OBJECT (mem),
         GST_MSDK_BUFFER_SURFACE);
+
+    if (!surface)
+      return;
+
     context = GST_MSDK_DMABUF_ALLOCATOR_CAST (mem->allocator)->context;
     alloc_response =
         GST_MSDK_DMABUF_ALLOCATOR_CAST (mem->allocator)->alloc_response;
@@ -147,6 +155,14 @@ gst_msdk_video_memory_release_surface (GstMemory * mem)
         GST_MSDK_BUFFER_SURFACE, NULL, NULL);
 
   return;
+}
+
+static gboolean
+gst_msdk_memory_dispose (GstMemory * mem)
+{
+  gst_msdk_video_memory_release_surface (mem);
+
+  return TRUE;
 }
 
 GstMemory *
@@ -175,6 +191,9 @@ gst_msdk_video_memory_new (GstAllocator * base_allocator)
   gst_memory_init (&mem->parent_instance, 0,
       base_allocator, NULL, GST_VIDEO_INFO_SIZE (vip), 0, 0,
       GST_VIDEO_INFO_SIZE (vip));
+
+  mem->parent_instance.mini_object.dispose =
+      (GstMiniObjectDisposeFunction) gst_msdk_memory_dispose;
 
   return GST_MEMORY_CAST (mem);
 }
@@ -518,6 +537,8 @@ gst_msdk_dmabuf_memory_new_with_surface (GstAllocator * allocator,
     return NULL;
   }
 
+  mem->mini_object.dispose =
+      (GstMiniObjectDisposeFunction) gst_msdk_memory_dispose;
   gst_mini_object_set_qdata (GST_MINI_OBJECT_CAST (mem),
       GST_MSDK_BUFFER_SURFACE, surface, NULL);
 
