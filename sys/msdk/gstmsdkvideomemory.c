@@ -105,6 +105,38 @@ gst_msdk_video_memory_get_surface_available (GstMemory * mem)
   return surface ? TRUE : FALSE;
 }
 
+void
+gst_msdk_video_memory_reset_surface_info (GstMemory * mem)
+{
+  GstAllocator *allocator;
+  mfxFrameSurface1 *surface;
+  mfxFrameInfo frame_info = { {0,}, 0, };
+  GstVideoInfo *vinfo = NULL;
+
+  g_return_if_fail (mem);
+  allocator = mem->allocator;
+
+  if (GST_IS_MSDK_VIDEO_ALLOCATOR (allocator)) {
+    vinfo = &GST_MSDK_VIDEO_ALLOCATOR_CAST (allocator)->image_info;
+    surface = GST_MSDK_VIDEO_MEMORY_CAST (mem)->surface;
+  } else if (GST_IS_MSDK_DMABUF_ALLOCATOR (allocator)) {
+    vinfo = &GST_MSDK_DMABUF_ALLOCATOR_CAST (allocator)->image_info;
+    surface =
+        gst_mini_object_get_qdata (GST_MINI_OBJECT (mem),
+        GST_MSDK_BUFFER_SURFACE);
+  } else {
+    return;
+  }
+
+  if (!surface) {
+    GST_ERROR ("Don't have an available mfx surface");
+    return;
+  }
+
+  gst_msdk_set_mfx_frame_info_from_video_info (&frame_info, vinfo);
+  surface->Info = frame_info;
+}
+
 /*
  * Every time releasing a gst buffer, we need to check the status of surface's lock,
  * so that we could manage locked surfaces separately in the context.

@@ -635,6 +635,11 @@ gst_msdkenc_init_encoder (GstMsdkEnc * thiz)
 
   request[0].NumFrameSuggested += thiz->num_extra_frames;
 
+  /* Require one more mfx surface to make sure the number of the allocated
+     mfx surfaces is greater than or equal to the number of the allocated
+     GST buffers */
+  request[0].NumFrameSuggested += 1;
+
   if (thiz->has_vpp)
     request[0].NumFrameSuggested += thiz->num_vpp_surfaces + 1 - 4;
 

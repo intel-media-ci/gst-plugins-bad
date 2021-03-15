@@ -304,7 +304,14 @@ gst_msdk_buffer_pool_acquire_buffer (GstBufferPool * pool,
       GST_WARNING_OBJECT (pool, "failed to get new surface available");
       return GST_FLOW_ERROR;
     }
+  } else {
+    /* The info might be changed in the previous process
+       Example: gst-launch-1.0 videotestsrc ! video/x-raw,width=1920,height=1080 ! \
+       msdkvpp hardware=true crop-left=0 crop-right=0 crop-top=10 crop-bottom=0 ! \
+       video/x-raw,format=NV12 ! fakesink */
+    gst_msdk_video_memory_reset_surface_info (gst_buffer_peek_memory (buf, 0));
   }
+
 #ifndef _WIN32
   /* When using dmabuf, we should confirm that the fd of memory and
    * the fd of surface match, since there is no guarantee that fd matches
@@ -331,20 +338,12 @@ gst_msdk_buffer_pool_acquire_buffer (GstBufferPool * pool,
 static void
 gst_msdk_buffer_pool_release_buffer (GstBufferPool * pool, GstBuffer * buf)
 {
-  mfxFrameSurface1 *surface;
-  GstMsdkBufferPool *msdk_pool = GST_MSDK_BUFFER_POOL_CAST (pool);
-  GstMsdkBufferPoolPrivate *priv = msdk_pool->priv;
+  /* Don't release mfx surface here because the associated GstMemory may be
+     shared between different buffers
+     Example: gst-launch-1.0 videotestsrc ! msdkvpp ! video/x-raw,format=NV12 ! \
+     intervideosink channel=frontvideosink intervideosrc channel=frontvideosink ! \
+     msdkvpp ! video/x-raw, format=YUY2 ! fakesink */
 
-  if (priv->memory_type == GST_MSDK_MEMORY_TYPE_SYSTEM)
-    goto done;
-
-  surface = gst_msdk_get_surface_from_buffer (buf);
-  if (!surface)
-    goto done;
-
-  gst_msdk_video_memory_release_surface (gst_buffer_peek_memory (buf, 0));
-
-done:
   GST_BUFFER_POOL_CLASS (parent_class)->release_buffer (pool, buf);
 }
 

@@ -89,6 +89,8 @@ gboolean
 gst_video_meta_unmap_msdk_memory (GstVideoMeta * meta, guint plane,
     GstMapInfo * info);
 
+void
+gst_msdk_video_memory_reset_surface_info (GstMemory * mem);
 
 /* ---------------------------------------------------------------------*/
 /* GstMsdkVideoAllocator                                                */
