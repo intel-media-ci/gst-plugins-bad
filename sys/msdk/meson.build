@@ -38,7 +38,7 @@ else
     endif
     subdir_done()
   endif
-  msdk_sources += ['msdk_libva.c', 'gstmsdkallocator_libva.c']
+  msdk_sources += ['msdk_libva.c', 'gstmsdkallocator_libva.c', 'gstmsdk_va.c']
 endif
 
 have_msdk = false
