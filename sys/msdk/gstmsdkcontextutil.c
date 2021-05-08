@@ -31,6 +31,7 @@
  */
 
 #include "gstmsdkcontextutil.h"
+#include <gst/va/gstvadisplay.h>
 
 GST_DEBUG_CATEGORY_STATIC (GST_CAT_CONTEXT);
 
@@ -233,4 +234,39 @@ gst_msdk_context_ensure_context (GstElement * element, gboolean hardware,
   gst_object_unref (msdk_context);
 
   return TRUE;
+}
+
+gboolean
+gst_msdk_context_from_external_display (GstContext * context, gboolean hardware,
+    GstMsdkContextJobType job_type, GstMsdkContext ** msdk_context)
+{
+#ifndef _WIN32
+  GstObject *va_display = NULL;
+  const gchar *type;
+  const GstStructure *s;
+  GstMsdkContext *ctx = NULL;
+
+  type = gst_context_get_context_type (context);
+  if (g_strcmp0 (type, GST_VA_DISPLAY_HANDLE_CONTEXT_TYPE_STR))
+    return FALSE;
+
+  s = gst_context_get_structure (context);
+  if (gst_structure_get (s, "gst-display", GST_TYPE_OBJECT, &va_display, NULL)) {
+    if (GST_IS_VA_DISPLAY (va_display)) {
+      ctx =
+          gst_msdk_context_new_with_va_display (va_display, hardware, job_type);
+      if (ctx)
+        *msdk_context = ctx;
+    }
+
+    /* let's try other fields */
+    gst_clear_object (&va_display);
+  }
+
+  if (ctx)
+    return TRUE;
+
+#endif
+
+  return FALSE;
 }

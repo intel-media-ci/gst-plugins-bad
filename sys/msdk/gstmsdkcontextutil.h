@@ -52,6 +52,10 @@ gst_msdk_context_get_context (GstContext * context, GstMsdkContext ** msdk_conte
 gboolean
 gst_msdk_context_ensure_context (GstElement * element, gboolean hardware, GstMsdkContextJobType job);
 
+gboolean
+gst_msdk_context_from_external_display (GstContext * context, gboolean hardware,
+    GstMsdkContextJobType job_type, GstMsdkContext ** msdk_context);
+
 G_END_DECLS
 
 #endif /* GST_MSDK_CONTEXT_UTIL_H */
