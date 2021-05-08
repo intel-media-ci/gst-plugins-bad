@@ -242,7 +242,32 @@ gst_msdk_context_propagate (GstElement * element, GstMsdkContext * msdk_context)
   msg = gst_message_new_have_context (GST_OBJECT_CAST (element), context);
   if (!gst_element_post_message (element, msg)) {
     GST_CAT_INFO_OBJECT (GST_CAT_CONTEXT, element, "No bus attached");
+    /* No need to post more message */
+    return;
   }
+#ifndef _WIN32
+  {
+    /* Also propagate the VA display */
+    GstObject *display = gst_msdk_context_get_display (msdk_context);
+
+    if (display) {
+      context = gst_context_new (GST_VA_DISPLAY_HANDLE_CONTEXT_TYPE_STR, FALSE);
+      structure = gst_context_writable_structure (context);
+      gst_structure_set (structure, "gst-display", GST_TYPE_OBJECT, display,
+          NULL);
+
+      GST_CAT_INFO_OBJECT (GST_CAT_CONTEXT, element,
+          "post have context (%p) message with display (%p)", context, display);
+
+      gst_object_unref (display);
+
+      msg = gst_message_new_have_context (GST_OBJECT_CAST (element), context);
+      if (!gst_element_post_message (element, msg)) {
+        GST_CAT_INFO_OBJECT (GST_CAT_CONTEXT, element, "No bus attached");
+      }
+    }
+  }
+#endif
 }
 
 gboolean
