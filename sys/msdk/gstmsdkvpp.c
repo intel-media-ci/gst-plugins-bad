@@ -1596,6 +1596,12 @@ gst_msdkvpp_set_context (GstElement * element, GstContext * context)
     gst_object_replace ((GstObject **) & thiz->context,
         (GstObject *) msdk_context);
     gst_object_unref (msdk_context);
+  } else if (gst_msdk_context_from_external_display (context,
+          thiz->hardware, 0 /* GST_MSDK_JOB_VPP will be set later */ ,
+          &msdk_context)) {
+    gst_object_replace ((GstObject **) & thiz->context,
+        (GstObject *) msdk_context);
+    gst_object_unref (msdk_context);
   }
 
   GST_ELEMENT_CLASS (parent_class)->set_context (element, context);

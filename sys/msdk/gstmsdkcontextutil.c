@@ -165,8 +165,37 @@ gst_msdk_context_find (GstElement * element, GstMsdkContext ** context_ptr)
   /* This may indirectly set *context_ptr, see function body */
   _gst_context_query (element, GST_MSDK_CONTEXT_TYPE_NAME);
 
-  if (*context_ptr)
+  if (*context_ptr) {
     GST_LOG_OBJECT (element, "found a context %" GST_PTR_FORMAT, *context_ptr);
+    return TRUE;
+  }
+#ifndef _WIN32
+  _gst_context_query (element, GST_VA_DISPLAY_HANDLE_CONTEXT_TYPE_STR);
+  if (*context_ptr) {
+    GstContext *context;
+    GstStructure *structure;
+    GstMessage *msg;
+
+    GST_LOG_OBJECT (element, "have a context %" GST_PTR_FORMAT
+        " from other va elements", *context_ptr);
+
+    /* Post a message for the new context from VA display */
+    context = gst_context_new (GST_MSDK_CONTEXT_TYPE_NAME, FALSE);
+
+    structure = gst_context_writable_structure (context);
+    gst_structure_set (structure, GST_MSDK_CONTEXT_TYPE_NAME,
+        GST_TYPE_MSDK_CONTEXT, *context_ptr, NULL);
+
+    GST_CAT_INFO_OBJECT (GST_CAT_CONTEXT, element,
+        "posting `have-context' message with MSDK context %" GST_PTR_FORMAT,
+        *context_ptr);
+
+    msg = gst_message_new_have_context (GST_OBJECT_CAST (element), context);
+    if (!gst_element_post_message (element, msg)) {
+      GST_CAT_INFO_OBJECT (GST_CAT_CONTEXT, element, "No bus attached");
+    }
+  }
+#endif
 
   return *context_ptr != NULL;
 }
