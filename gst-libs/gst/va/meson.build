@@ -17,19 +17,21 @@ va_headers = [
 gstva_dep = dependency('', required : false)
 
 va_option = get_option('va')
-if va_option.disabled() or host_system != 'linux'
+msdk_option = get_option('msdk')
+need_va_lib = not (va_option.disabled() and msdk_option.disabled())
+if (not need_va_lib) or host_system != 'linux'
   subdir_done()
 endif
 
 libva_req = ['>= 1.6']
 
-libva_dep = dependency('libva', version: libva_req, required: va_option)
-libva_drm_dep = dependency('libva-drm', version: libva_req, required: va_option)
-libgudev_dep = dependency('gudev-1.0', required: va_option)
+libva_dep = dependency('libva', version: libva_req, required: need_va_lib)
+libva_drm_dep = dependency('libva-drm', version: libva_req, required: need_va_lib)
+libgudev_dep = dependency('gudev-1.0', required: need_va_lib)
 libdrm_dep = dependency('libdrm', required: false, fallback: ['libdrm', 'ext_libdrm'])
 
 if not (libva_dep.found() and libva_drm_dep.found() and libgudev_dep.found())
-  if va_option.enabled()
+  if need_va_lib
     error('The va lib was enabled explicity, but required dependencies were not found.')
   endif
   subdir_done()
