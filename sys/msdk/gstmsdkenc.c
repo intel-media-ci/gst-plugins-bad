@@ -301,10 +301,16 @@ gst_msdkenc_ensure_extended_coding_options (GstMsdkEnc * thiz)
   mfxExtCodingOption2 *option2 = &thiz->option2;
   mfxExtCodingOption3 *option3 = &thiz->option3;
 
+  guint extbrc = MFX_CODINGOPTION_OFF;
+  if (thiz->ext_coding_props) {
+    gst_msdkenc_ext_coding_parse_prop (thiz, "extbrc", &extbrc, G_TYPE_UINT);
+  }
+
   /* Fill ExtendedCodingOption2, set non-zero defaults too */
   option2->Header.BufferId = MFX_EXTBUFF_CODING_OPTION2;
   option2->Header.BufferSz = sizeof (thiz->option2);
   option2->MBBRC = thiz->mbbrc;
+  option2->ExtBRC = extbrc;
   option2->AdaptiveI = thiz->adaptive_i;
   option2->AdaptiveB = thiz->adaptive_b;
   option2->BitrateLimit = MFX_CODINGOPTION_OFF;
@@ -2397,11 +2403,13 @@ gst_msdkenc_install_common_properties (GstMsdkEncClass * klass)
    *
    * Supported properties:
    * ```
+   * extbrc         : External bitrate control
+   *                  String. Range: { auto, on, off } Default: off
    * ```
    *
    * Example:
    * ```
-   * ext-coding-props="props,"
+   * ext-coding-props="props,extbrc=on"
    * ```
    *
    * Since: 1.20
