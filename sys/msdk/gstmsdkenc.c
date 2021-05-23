@@ -102,6 +102,7 @@ static GstStaticPadTemplate sink_factory = GST_STATIC_PAD_TEMPLATE ("sink",
 #define PROP_MAX_VBV_BITRATE_DEFAULT     0
 #define PROP_MAX_FRAME_SIZE_DEFAULT      0
 #define PROP_MBBRC_DEFAULT               MFX_CODINGOPTION_OFF
+#define PROP_EXTBRC_DEFAULT              MFX_CODINGOPTION_OFF
 #define PROP_ADAPTIVE_I_DEFAULT          MFX_CODINGOPTION_OFF
 #define PROP_ADAPTIVE_B_DEFAULT          MFX_CODINGOPTION_OFF
 
@@ -300,10 +301,16 @@ gst_msdkenc_ensure_extended_coding_options (GstMsdkEnc * thiz)
   mfxExtCodingOption2 *option2 = &thiz->option2;
   mfxExtCodingOption3 *option3 = &thiz->option3;
 
+  if (thiz->ext_coding_props) {
+    gst_msdkenc_ext_coding_parse_prop (thiz,
+        "extbrc", &thiz->extbrc, G_TYPE_UINT);
+  }
+
   /* Fill ExtendedCodingOption2, set non-zero defaults too */
   option2->Header.BufferId = MFX_EXTBUFF_CODING_OPTION2;
   option2->Header.BufferSz = sizeof (thiz->option2);
   option2->MBBRC = thiz->mbbrc;
+  option2->ExtBRC = thiz->extbrc;
   option2->AdaptiveI = thiz->adaptive_i;
   option2->AdaptiveB = thiz->adaptive_b;
   option2->BitrateLimit = MFX_CODINGOPTION_OFF;
@@ -2046,6 +2053,7 @@ gst_msdkenc_init (GstMsdkEnc * thiz)
   thiz->b_frames = PROP_B_FRAMES_DEFAULT;
   thiz->num_slices = PROP_NUM_SLICES_DEFAULT;
   thiz->mbbrc = PROP_MBBRC_DEFAULT;
+  thiz->extbrc = PROP_EXTBRC_DEFAULT;
   thiz->adaptive_i = PROP_ADAPTIVE_I_DEFAULT;
   thiz->adaptive_b = PROP_ADAPTIVE_B_DEFAULT;
 }
@@ -2396,11 +2404,13 @@ gst_msdkenc_install_common_properties (GstMsdkEncClass * klass)
    *
    * Supported properties:
    * ```
+   * extbrc         : External bitrate control
+   *                  String. Range: { auto, on, off } Default: off
    * ```
    *
    * Example:
    * ```
-   * ext-coding-props="props,"
+   * ext-coding-props="props,extbrc=on"
    * ```
    *
    * Since: 1.20

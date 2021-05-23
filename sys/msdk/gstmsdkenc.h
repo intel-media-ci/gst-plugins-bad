@@ -156,6 +156,7 @@ struct _GstMsdkEnc
   guint b_frames;
   guint num_slices;
   gint16 mbbrc;
+  gint16 extbrc;
   gint16 adaptive_i;
   gint16 adaptive_b;
 
