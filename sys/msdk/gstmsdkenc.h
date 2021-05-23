@@ -83,6 +83,7 @@ enum
   GST_MSDKENC_PROP_MBBRC,
   GST_MSDKENC_PROP_ADAPTIVE_I,
   GST_MSDKENC_PROP_ADAPTIVE_B,
+  GST_MSDKENC_PROP_EXT_CODING_PROPS,
   GST_MSDKENC_PROP_MAX,
 };
 
@@ -158,6 +159,8 @@ struct _GstMsdkEnc
   gint16 adaptive_i;
   gint16 adaptive_b;
 
+  GstStructure *ext_coding_props;
+
   gboolean reconfig;
 
   guint16 codename;
@@ -206,6 +209,10 @@ gst_msdkenc_get_common_property (GObject * object, guint prop_id,
                                  GValue * value, GParamSpec * pspec);
 void
 gst_msdkenc_ensure_extended_coding_options (GstMsdkEnc * thiz);
+
+void
+gst_msdkenc_ext_coding_parse_prop (GstMsdkEnc *thiz,
+    const gchar *key, gpointer prop, GType prop_type);
 
 gboolean
 gst_msdkenc_get_roi_params (GstMsdkEnc * thiz,

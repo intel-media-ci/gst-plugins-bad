@@ -213,6 +213,88 @@ ensure_bitrate_control (GstMsdkEnc * thiz)
   }
 }
 
+/* Supported types: gchar*, gboolean, gint, guint, gfloat, gdouble */
+static void
+parse_prop_from_structure (GstStructure *s,
+    const gchar *key, gpointer prop, GType prop_type)
+{
+  const GValue *gvalue = gst_structure_get_value (s, key);
+  if (!gvalue)
+    return;
+
+  switch (prop_type) {
+    case G_TYPE_STRING: {
+      const gchar **value = (const gchar **)prop;
+      *value = g_value_get_string (gvalue);
+      break;
+    }
+    case G_TYPE_BOOLEAN: {
+      gboolean *value = (gboolean *)prop;
+      if (G_VALUE_TYPE (gvalue) == G_TYPE_INT) {
+        *value = (g_value_get_int (gvalue) != 0) ? TRUE : FALSE;
+      } else {
+        *value = g_value_get_boolean (gvalue);
+      }
+      break;
+    }
+    case G_TYPE_INT: {
+      gint *value = (gint *)prop;
+      *value = g_value_get_int (gvalue);
+      break;
+    }
+    case G_TYPE_UINT: {
+      guint *value = (guint *)prop;
+      if (G_VALUE_TYPE (gvalue) == G_TYPE_STRING) {
+        const gchar *str = g_value_get_string (gvalue);
+        if (!g_strcmp0 (str , "auto")) {
+          *value = MFX_CODINGOPTION_UNKNOWN;
+        } else if (!g_strcmp0 (str , "off")) {
+          *value =  MFX_CODINGOPTION_OFF;
+        } else if (!g_strcmp0 (str , "on")) {
+          *value = MFX_CODINGOPTION_ON;
+        } else {
+          GST_ERROR ("%s unsupported option %s", key, str);
+        }
+      } else if (G_VALUE_TYPE (gvalue) == G_TYPE_INT) {
+        *value = g_value_get_int (gvalue);
+      } else {
+        *value = g_value_get_uint (gvalue);
+      }
+      break;
+    }
+    case G_TYPE_FLOAT: {
+      gfloat *value = (gfloat *)prop;
+      if (G_VALUE_TYPE (gvalue) == G_TYPE_INT) {
+        *value = g_value_get_int (gvalue);
+      } else if (G_VALUE_TYPE (gvalue) == G_TYPE_DOUBLE) {
+        *value = g_value_get_double (gvalue);
+      } else {
+        *value = g_value_get_float (gvalue);
+      }
+      break;
+    }
+    case G_TYPE_DOUBLE: {
+      gdouble *value = (gdouble *)prop;
+      if (G_VALUE_TYPE (gvalue) == G_TYPE_INT) {
+        *value = g_value_get_int (gvalue);
+      } else {
+        *value = g_value_get_double (gvalue);
+      }
+      break;
+    }
+    default:
+      GST_ERROR ("%s unsupported type %s", key, G_VALUE_TYPE_NAME (gvalue));
+      break;
+  }
+}
+
+void
+gst_msdkenc_ext_coding_parse_prop (GstMsdkEnc *thiz,
+    const gchar *key, gpointer prop, GType prop_type)
+{
+  parse_prop_from_structure (thiz->ext_coding_props, key, prop, prop_type);
+}
+
 void
 gst_msdkenc_ensure_extended_coding_options (GstMsdkEnc * thiz)
 {
@@ -2063,6 +2145,13 @@ gst_msdkenc_set_common_property (GObject * object, guint prop_id,
     case GST_MSDKENC_PROP_ADAPTIVE_B:
       thiz->adaptive_b = g_value_get_enum (value);
       break;
+    case GST_MSDKENC_PROP_EXT_CODING_PROPS:
+    {
+      const GstStructure *s = gst_value_get_structure (value);
+      g_clear_pointer (&thiz->ext_coding_props, gst_structure_free);
+      thiz->ext_coding_props = gst_structure_copy (s);
+      break;
+    }
     default:
       ret = FALSE;
       break;
@@ -2155,6 +2244,9 @@ gst_msdkenc_get_common_property (GObject * object, guint prop_id,
       break;
     case GST_MSDKENC_PROP_ADAPTIVE_B:
       g_value_set_enum (value, thiz->adaptive_b);
+      break;
+    case GST_MSDKENC_PROP_EXT_CODING_PROPS:
+      g_value_take_boxed (value, thiz->ext_coding_props);
       break;
     default:
       ret = FALSE;
@@ -2297,6 +2389,29 @@ gst_msdkenc_install_common_properties (GstMsdkEncClass * klass)
       "Adaptive B-Frame Insertion control",
       gst_msdkenc_adaptive_b_get_type (),
       PROP_ADAPTIVE_B_DEFAULT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+  /**
+   * GstMsdkEnc:ext-coding-props
+   *
+   * The properties for the external coding.
+   *
+   * Supported properties:
+   * ```
+   * ```
+   *
+   * Example:
+   * ```
+   * ext-coding-props="props,"
+   * ```
+   *
+   * Since: 1.20
+   *
+   */
+  obj_properties[GST_MSDKENC_PROP_EXT_CODING_PROPS] =
+      g_param_spec_boxed ("ext-coding-props", "External coding properties",
+      "The properties for the external coding, refer to the hotdoc for the "
+      "supported properties",
+      GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties (gobject_class,
       GST_MSDKENC_PROP_MAX, obj_properties);
