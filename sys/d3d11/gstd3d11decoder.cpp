@@ -528,6 +528,30 @@ error:
   return FALSE;
 }
 
+static const gchar *
+gst_d3d11_codec_to_string (GstD3D11Codec codec)
+{
+  switch (codec) {
+    case GST_D3D11_CODEC_NONE:
+      return "none";
+    case GST_D3D11_CODEC_H264:
+      return "H.264";
+    case GST_D3D11_CODEC_VP9:
+      return "VP9";
+    case GST_D3D11_CODEC_H265:
+      return "H.265";
+    case GST_D3D11_CODEC_VP8:
+      return "VP8";
+    case GST_D3D11_CODEC_MPEG2:
+      return "MPEG2";
+    default:
+      g_assert_not_reached ();
+      break;
+  }
+
+  return "Unknown";
+}
+
 gboolean
 gst_d3d11_decoder_get_supported_decoder_profile (GstD3D11Decoder * decoder,
     GstD3D11Codec codec, GstVideoFormat format, const GUID ** selected_profile)
@@ -647,7 +671,8 @@ gst_d3d11_decoder_get_supported_decoder_profile (GstD3D11Decoder * decoder,
   }
 
   if (!profile) {
-    GST_WARNING_OBJECT (decoder, "No supported decoder profile");
+    GST_INFO_OBJECT (decoder, "No supported decoder profile for %s codec",
+        gst_d3d11_codec_to_string (codec));
     return FALSE;
   }
 
@@ -1153,8 +1178,13 @@ gst_d3d11_decoder_get_output_view_buffer (GstD3D11Decoder * decoder,
   ret = gst_buffer_pool_acquire_buffer (decoder->internal_pool, &buf, NULL);
 
   if (ret != GST_FLOW_OK || !buf) {
-    GST_ERROR_OBJECT (videodec, "Couldn't get buffer from pool, ret %s",
-        gst_flow_get_name (ret));
+    if (ret != GST_FLOW_FLUSHING) {
+      GST_ERROR_OBJECT (videodec, "Couldn't get buffer from pool, ret %s",
+          gst_flow_get_name (ret));
+    } else {
+      GST_DEBUG_OBJECT (videodec, "We are flusing");
+    }
+
     return NULL;
   }
 

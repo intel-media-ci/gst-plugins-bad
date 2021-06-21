@@ -62,6 +62,8 @@
 /* The extra time for the rtpstorage compared to the RTP jitterbuffer (in ms) */
 #define RTPSTORAGE_EXTRA_TIME (50)
 
+#define DEFAULT_JB_LATENCY 200
+
 /**
  * SECTION: element-webrtcbin
  * title: webrtcbin
@@ -3225,6 +3227,8 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options,
     if (sdp_media_from_transceiver (webrtc, &media, trans, media_idx,
             bundled_mids, 0, bundle_ufrag, bundle_pwd, reserved_pts, all_mids,
             error)) {
+      /* as per JSEP, a=rtcp-mux-only is only added for new streams */
+      gst_sdp_media_add_attribute (&media, "rtcp-mux-only", "");
       gst_sdp_message_add_media (ret, &media);
       media_idx++;
     } else {
@@ -4861,6 +4865,8 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
 
         _update_transceiver_from_sdp_media (webrtc, sdp->sdp, i, stream,
             trans, bundled, bundle_idx, error);
+        if (error && *error)
+          goto done;
       } else if (_message_media_is_datachannel (sdp->sdp, i)) {
         _update_data_channel_from_sdp_media (webrtc, sdp->sdp, i, stream,
             error);
@@ -7111,7 +7117,8 @@ gst_webrtc_bin_class_init (GstWebRTCBinClass * klass)
       PROP_LATENCY,
       g_param_spec_uint ("latency", "Latency",
           "Default duration to buffer in the jitterbuffers (in ms)",
-          0, G_MAXUINT, 200, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          0, G_MAXUINT, DEFAULT_JB_LATENCY,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
    * GstWebRTCBin::create-offer:
@@ -7437,4 +7444,5 @@ gst_webrtc_bin_init (GstWebRTCBin * webrtc)
 
   /* we start off closed until we move to READY */
   webrtc->priv->is_closed = TRUE;
+  webrtc->priv->jb_latency = DEFAULT_JB_LATENCY;
 }

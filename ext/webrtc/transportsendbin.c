@@ -171,8 +171,9 @@ transport_send_bin_change_state (GstElement * element,
        * arguably the element should be able to deal with this itself or
        * we should only add it once/if we get the encoding keys */
       TSB_LOCK (send);
-      gst_element_set_locked_state (send->rtp_ctx.dtlssrtpenc, TRUE);
+      gst_element_set_locked_state (send->dtlssrtpenc, TRUE);
       send->active = TRUE;
+      send->has_clientness = FALSE;
       TSB_UNLOCK (send);
       break;
     }
@@ -183,12 +184,11 @@ transport_send_bin_change_state (GstElement * element,
       /* RTP */
       /* unblock the encoder once the key is set, this should also be automatic */
       elem = send->stream->transport->dtlssrtpenc;
-      send->rtp_ctx.rtp_block = block_peer_pad (elem, "rtp_sink_0");
+      send->rtp_block = block_peer_pad (elem, "rtp_sink_0");
       /* Also block the RTCP pad on the RTP encoder, in case we mux RTCP */
-      send->rtp_ctx.rtcp_block = block_peer_pad (elem, "rtcp_sink_0");
+      send->rtcp_block = block_peer_pad (elem, "rtcp_sink_0");
       /* unblock ice sink once a connection is made, this should also be automatic */
       elem = send->stream->transport->transport->sink;
-      send->rtp_ctx.nice_block = block_peer_pad (elem, "sink");
 
       TSB_UNLOCK (send);
       break;
@@ -219,7 +219,7 @@ transport_send_bin_change_state (GstElement * element,
       send->active = FALSE;
       cleanup_blocks (send);
 
-      gst_element_set_locked_state (send->rtp_ctx.dtlssrtpenc, FALSE);
+      gst_element_set_locked_state (send->dtlssrtpenc, FALSE);
       TSB_UNLOCK (send);
 
       break;
@@ -234,11 +234,7 @@ transport_send_bin_change_state (GstElement * element,
 static void
 _on_dtls_enc_key_set (GstElement * dtlssrtpenc, TransportSendBin * send)
 {
-  TransportSendBinDTLSContext *ctx;
-
-  if (dtlssrtpenc == send->rtp_ctx.dtlssrtpenc)
-    ctx = &send->rtp_ctx;
-  else {
+  if (dtlssrtpenc != send->dtlssrtpenc) {
     GST_WARNING_OBJECT (send,
         "Received dtls-enc key info for unknown element %" GST_PTR_FORMAT,
         dtlssrtpenc);
@@ -253,22 +249,40 @@ _on_dtls_enc_key_set (GstElement * dtlssrtpenc, TransportSendBin * send)
   }
 
   GST_LOG_OBJECT (send, "Unblocking %" GST_PTR_FORMAT " pads", dtlssrtpenc);
-  _free_pad_block (ctx->rtp_block);
-  _free_pad_block (ctx->rtcp_block);
-  ctx->rtp_block = ctx->rtcp_block = NULL;
+  _free_pad_block (send->rtp_block);
+  _free_pad_block (send->rtcp_block);
+  send->rtp_block = send->rtcp_block = NULL;
 
 done:
   TSB_UNLOCK (send);
 }
 
 static void
+maybe_start_enc (TransportSendBin * send)
+{
+  GstWebRTCICEConnectionState state;
+
+  if (!send->has_clientness) {
+    GST_LOG_OBJECT (send, "Can't start DTLS because doesn't know client-ness");
+    return;
+  }
+
+  g_object_get (send->stream->transport->transport, "state", &state, NULL);
+  if (state != GST_WEBRTC_ICE_CONNECTION_STATE_CONNECTED &&
+      state != GST_WEBRTC_ICE_CONNECTION_STATE_COMPLETED) {
+    GST_LOG_OBJECT (send, "Can't start DTLS yet because ICE is not connected.");
+    return;
+  }
+
+  gst_element_set_locked_state (send->dtlssrtpenc, FALSE);
+  gst_element_sync_state_with_parent (send->dtlssrtpenc);
+}
+
+static void
 _on_notify_dtls_client_status (GstElement * dtlssrtpenc,
     GParamSpec * pspec, TransportSendBin * send)
 {
-  TransportSendBinDTLSContext *ctx;
-  if (dtlssrtpenc == send->rtp_ctx.dtlssrtpenc)
-    ctx = &send->rtp_ctx;
-  else {
+  if (dtlssrtpenc != send->dtlssrtpenc) {
     GST_WARNING_OBJECT (send,
         "Received dtls-enc client mode for unknown element %" GST_PTR_FORMAT,
         dtlssrtpenc);
@@ -282,11 +296,12 @@ _on_notify_dtls_client_status (GstElement * dtlssrtpenc,
     goto done;
   }
 
+  send->has_clientness = TRUE;
   GST_DEBUG_OBJECT (send,
-      "DTLS-SRTP encoder configured. Unlocking it and changing state %"
-      GST_PTR_FORMAT, ctx->dtlssrtpenc);
-  gst_element_set_locked_state (ctx->dtlssrtpenc, FALSE);
-  gst_element_sync_state_with_parent (ctx->dtlssrtpenc);
+      "DTLS-SRTP encoder configured. Unlocking it and maybe changing state %"
+      GST_PTR_FORMAT, dtlssrtpenc);
+  maybe_start_enc (send);
+
 done:
   TSB_UNLOCK (send);
 }
@@ -295,81 +310,52 @@ static void
 _on_notify_ice_connection_state (GstWebRTCICETransport * transport,
     GParamSpec * pspec, TransportSendBin * send)
 {
-  GstWebRTCICEConnectionState state;
-
-  g_object_get (transport, "state", &state, NULL);
-
-  if (state == GST_WEBRTC_ICE_CONNECTION_STATE_CONNECTED ||
-      state == GST_WEBRTC_ICE_CONNECTION_STATE_COMPLETED) {
-    TSB_LOCK (send);
-    if (transport == send->stream->transport->transport) {
-      if (send->rtp_ctx.nice_block) {
-        GST_LOG_OBJECT (send, "Unblocking pad %" GST_PTR_FORMAT,
-            send->rtp_ctx.nice_block->pad);
-        _free_pad_block (send->rtp_ctx.nice_block);
-        send->rtp_ctx.nice_block = NULL;
-      }
-    }
-    TSB_UNLOCK (send);
-  }
-}
-
-static void
-tsb_setup_ctx (TransportSendBin * send, TransportSendBinDTLSContext * ctx,
-    GstWebRTCDTLSTransport * transport)
-{
-  GstElement *dtlssrtpenc, *nicesink;
-
-  dtlssrtpenc = ctx->dtlssrtpenc = transport->dtlssrtpenc;
-  nicesink = ctx->nicesink = transport->transport->sink;
-
-  /* unblock the encoder once the key is set */
-  g_signal_connect (dtlssrtpenc, "on-key-set",
-      G_CALLBACK (_on_dtls_enc_key_set), send);
-  /* Bring the encoder up to current state only once the is-client prop is set */
-  g_signal_connect (dtlssrtpenc, "notify::is-client",
-      G_CALLBACK (_on_notify_dtls_client_status), send);
-  gst_bin_add (GST_BIN (send), GST_ELEMENT (dtlssrtpenc));
-
-  /* unblock ice sink once it signals a connection */
-  g_signal_connect (transport->transport, "notify::state",
-      G_CALLBACK (_on_notify_ice_connection_state), send);
-  gst_bin_add (GST_BIN (send), GST_ELEMENT (nicesink));
-
-  if (!gst_element_link_pads (GST_ELEMENT (dtlssrtpenc), "src", nicesink,
-          "sink"))
-    g_warn_if_reached ();
+  TSB_LOCK (send);
+  maybe_start_enc (send);
+  TSB_UNLOCK (send);
 }
 
 static void
 transport_send_bin_constructed (GObject * object)
 {
   TransportSendBin *send = TRANSPORT_SEND_BIN (object);
-  GstWebRTCDTLSTransport *transport;
   GstPadTemplate *templ;
   GstPad *ghost, *pad;
 
   g_return_if_fail (send->stream);
 
-  /* RTP */
-  transport = send->stream->transport;
-  /* Do the common init for the context struct */
-  tsb_setup_ctx (send, &send->rtp_ctx, transport);
+  send->dtlssrtpenc = send->stream->transport->dtlssrtpenc;
+  send->nicesink = send->stream->transport->transport->sink;
 
-  templ = _find_pad_template (transport->dtlssrtpenc,
-      GST_PAD_SINK, GST_PAD_REQUEST, "rtp_sink_%d");
-  pad = gst_element_request_pad (transport->dtlssrtpenc, templ, "rtp_sink_0",
-      NULL);
+  /* unblock the encoder once the key is set */
+  g_signal_connect (send->dtlssrtpenc, "on-key-set",
+      G_CALLBACK (_on_dtls_enc_key_set), send);
+  /* Bring the encoder up to current state only once the is-client prop is set */
+  g_signal_connect (send->dtlssrtpenc, "notify::is-client",
+      G_CALLBACK (_on_notify_dtls_client_status), send);
+  /* unblock ice sink once it signals a connection */
+  g_signal_connect (send->stream->transport->transport, "notify::state",
+      G_CALLBACK (_on_notify_ice_connection_state), send);
+
+  gst_bin_add (GST_BIN (send), GST_ELEMENT (send->dtlssrtpenc));
+  gst_bin_add (GST_BIN (send), GST_ELEMENT (send->nicesink));
+
+  if (!gst_element_link_pads (GST_ELEMENT (send->dtlssrtpenc), "src",
+          send->nicesink, "sink"))
+    g_warn_if_reached ();
+
+  templ = _find_pad_template (send->dtlssrtpenc, GST_PAD_SINK, GST_PAD_REQUEST,
+      "rtp_sink_%d");
+  pad = gst_element_request_pad (send->dtlssrtpenc, templ, "rtp_sink_0", NULL);
 
   ghost = gst_ghost_pad_new ("rtp_sink", pad);
   gst_element_add_pad (GST_ELEMENT (send), ghost);
   gst_object_unref (pad);
 
   /* push the data stream onto the RTP dtls element */
-  templ = _find_pad_template (transport->dtlssrtpenc,
-      GST_PAD_SINK, GST_PAD_REQUEST, "data_sink");
-  pad = gst_element_request_pad (transport->dtlssrtpenc, templ, "data_sink",
-      NULL);
+  templ = _find_pad_template (send->dtlssrtpenc, GST_PAD_SINK, GST_PAD_REQUEST,
+      "data_sink");
+  pad = gst_element_request_pad (send->dtlssrtpenc, templ, "data_sink", NULL);
 
   ghost = gst_ghost_pad_new ("data_sink", pad);
   gst_element_add_pad (GST_ELEMENT (send), ghost);
@@ -377,10 +363,9 @@ transport_send_bin_constructed (GObject * object)
 
   /* RTCP */
   /* Do the common init for the context struct */
-  templ = _find_pad_template (transport->dtlssrtpenc,
-      GST_PAD_SINK, GST_PAD_REQUEST, "rtcp_sink_%d");
-  pad = gst_element_request_pad (transport->dtlssrtpenc, templ, "rtcp_sink_0",
-      NULL);
+  templ = _find_pad_template (send->dtlssrtpenc, GST_PAD_SINK, GST_PAD_REQUEST,
+      "rtcp_sink_%d");
+  pad = gst_element_request_pad (send->dtlssrtpenc, templ, "rtcp_sink_0", NULL);
 
   ghost = gst_ghost_pad_new ("rtcp_sink", pad);
   gst_element_add_pad (GST_ELEMENT (send), ghost);
@@ -390,28 +375,17 @@ transport_send_bin_constructed (GObject * object)
 }
 
 static void
-cleanup_ctx_blocks (TransportSendBinDTLSContext * ctx)
-{
-  if (ctx->rtp_block) {
-    _free_pad_block (ctx->rtp_block);
-    ctx->rtp_block = NULL;
-  }
-
-  if (ctx->rtcp_block) {
-    _free_pad_block (ctx->rtcp_block);
-    ctx->rtcp_block = NULL;
-  }
-
-  if (ctx->nice_block) {
-    _free_pad_block (ctx->nice_block);
-    ctx->nice_block = NULL;
-  }
-}
-
-static void
 cleanup_blocks (TransportSendBin * send)
 {
-  cleanup_ctx_blocks (&send->rtp_ctx);
+  if (send->rtp_block) {
+    _free_pad_block (send->rtp_block);
+    send->rtp_block = NULL;
+  }
+
+  if (send->rtcp_block) {
+    _free_pad_block (send->rtcp_block);
+    send->rtcp_block = NULL;
+  }
 }
 
 static void
@@ -420,10 +394,11 @@ transport_send_bin_dispose (GObject * object)
   TransportSendBin *send = TRANSPORT_SEND_BIN (object);
 
   TSB_LOCK (send);
-  if (send->rtp_ctx.nicesink) {
-    g_signal_handlers_disconnect_by_data (send->rtp_ctx.nicesink, send);
-    send->rtp_ctx.nicesink = NULL;
+  if (send->nicesink) {
+    g_signal_handlers_disconnect_by_data (send->nicesink, send);
+    send->nicesink = NULL;
   }
+
   cleanup_blocks (send);
 
   TSB_UNLOCK (send);

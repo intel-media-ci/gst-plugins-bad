@@ -407,7 +407,6 @@ struct _GstD3D11CompositorPad
   gboolean alpha_updated;
   gboolean blend_desc_updated;
   ID3D11BlendState *blend;
-  gboolean caps_updated;
 
   /* properties */
   gint xpos;
@@ -430,6 +429,8 @@ struct _GstD3D11Compositor
 
   GstD3D11Quad *checker_background;
   D3D11_VIEWPORT viewport;
+
+  gboolean reconfigured;
 
   /* properties */
   gint adapter;
@@ -1198,20 +1199,38 @@ gst_d3d11_compositor_pad_setup_converter (GstVideoAggregatorPad * pad,
   guint zorder = 0;
 #endif
 
-  if (!cpad->convert || cpad->alpha_updated || cpad->caps_updated) {
+  if (!cpad->convert || self->reconfigured) {
+    GstStructure *config;
+
     if (cpad->convert)
       gst_d3d11_converter_free (cpad->convert);
+
+    config = gst_structure_new_empty ("config");
+    if (cpad->alpha <= 1.0) {
+      gst_structure_set (config, GST_D3D11_CONVERTER_OPT_ALPHA_VALUE,
+          G_TYPE_DOUBLE, cpad->alpha, nullptr);
+    }
+
     cpad->convert =
-        gst_d3d11_converter_new_with_alpha (self->device,
-        &pad->info, &vagg->info, cpad->alpha);
-    cpad->alpha_updated = FALSE;
-    cpad->caps_updated = FALSE;
+        gst_d3d11_converter_new (self->device, &pad->info, &vagg->info, config);
+
     if (!cpad->convert) {
       GST_ERROR_OBJECT (pad, "Couldn't create converter");
       return FALSE;
     }
 
     is_first = TRUE;
+  } else if (cpad->alpha_updated) {
+    GstStructure *config;
+
+    config = gst_structure_new_empty ("config");
+    if (cpad->alpha <= 1.0) {
+      gst_structure_set (config, GST_D3D11_CONVERTER_OPT_ALPHA_VALUE,
+          G_TYPE_DOUBLE, cpad->alpha, nullptr);
+    }
+
+    gst_d3d11_converter_update_config (cpad->convert, config);
+    cpad->alpha_updated = FALSE;
   }
 
   if (!cpad->blend || cpad->blend_desc_updated) {
@@ -1310,8 +1329,6 @@ static gboolean gst_d3d11_compositor_propose_allocation (GstAggregator *
     GstQuery * query);
 static gboolean gst_d3d11_compositor_decide_allocation (GstAggregator *
     aggregator, GstQuery * query);
-static gboolean gst_d3d11_compositor_sink_event (GstAggregator * agg,
-    GstAggregatorPad * pad, GstEvent * event);
 static GstFlowReturn
 gst_d3d11_compositor_aggregate_frames (GstVideoAggregator * vagg,
     GstBuffer * outbuf);
@@ -1346,7 +1363,7 @@ gst_d3d11_compositor_class_init (GstD3D11CompositorClass * klass)
 
   g_object_class_install_property (gobject_class, PROP_BACKGROUND,
       g_param_spec_enum ("background", "Background", "Background type",
-          GST_TYPE_COMPOSITOR_BACKGROUND,
+          GST_TYPE_D3D11_COMPOSITOR_BACKGROUND,
           DEFAULT_BACKGROUND,
           (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
@@ -1369,8 +1386,6 @@ gst_d3d11_compositor_class_init (GstD3D11CompositorClass * klass)
       GST_DEBUG_FUNCPTR (gst_d3d11_compositor_propose_allocation);
   aggregator_class->decide_allocation =
       GST_DEBUG_FUNCPTR (gst_d3d11_compositor_decide_allocation);
-  aggregator_class->sink_event =
-      GST_DEBUG_FUNCPTR (gst_d3d11_compositor_sink_event);
 
   vagg_class->aggregate_frames =
       GST_DEBUG_FUNCPTR (gst_d3d11_compositor_aggregate_frames);
@@ -1391,7 +1406,7 @@ gst_d3d11_compositor_class_init (GstD3D11CompositorClass * klass)
       "Filter/Editor/Video/Compositor",
       "A Direct3D11 compositor", "Seungha Yang <seungha@centricular.com>");
 
-  gst_type_mark_as_plugin_api (GST_TYPE_COMPOSITOR_BACKGROUND,
+  gst_type_mark_as_plugin_api (GST_TYPE_D3D11_COMPOSITOR_BACKGROUND,
       (GstPluginAPIFlags) 0);
   gst_type_mark_as_plugin_api (GST_TYPE_D3D11_COMPOSITOR_PAD,
       (GstPluginAPIFlags) 0);
@@ -1903,25 +1918,9 @@ gst_d3d11_compositor_decide_allocation (GstAggregator * aggregator,
     gst_query_add_allocation_pool (query, pool, size, min, max);
   gst_object_unref (pool);
 
+  self->reconfigured = TRUE;
+
   return TRUE;
-}
-
-static gboolean
-gst_d3d11_compositor_sink_event (GstAggregator * agg, GstAggregatorPad * pad,
-    GstEvent * event)
-{
-  GstD3D11CompositorPad *cpad = GST_D3D11_COMPOSITOR_PAD (pad);
-
-  switch (GST_EVENT_TYPE (event)) {
-    case GST_EVENT_CAPS:
-      GST_DEBUG_OBJECT (pad, "Got new caps event %" GST_PTR_FORMAT, event);
-      cpad->caps_updated = TRUE;
-      break;
-    default:
-      break;
-  }
-
-  return GST_AGGREGATOR_CLASS (parent_class)->sink_event (agg, pad, event);
 }
 
 typedef struct
@@ -2069,7 +2068,7 @@ gst_d3d11_compositor_create_checker_quad (GstD3D11Compositor * self)
   context_handle->Unmap (index_buffer.Get (), 0);
 
   quad = gst_d3d11_quad_new (self->device,
-      ps.Get (), vs.Get (), layout.Get (), NULL, NULL, NULL, NULL,
+      ps.Get (), vs.Get (), layout.Get (), nullptr, 0,
       vertex_buffer.Get (), sizeof (VertexData), index_buffer.Get (),
       DXGI_FORMAT_R16_UINT, 6);
   if (!quad) {
@@ -2101,7 +2100,7 @@ gst_d3d11_compositor_draw_background_checker (GstD3D11Compositor * self,
   }
 
   return gst_d3d11_draw_quad_unlocked (self->checker_background,
-      &self->viewport, 1, NULL, 0, &rtv, 1, NULL, NULL, NULL);
+      &self->viewport, 1, NULL, 0, &rtv, 1, NULL, NULL, NULL, 0);
 }
 
 /* Must be called with d3d11 device lock */
@@ -2251,6 +2250,8 @@ gst_d3d11_compositor_aggregate_frames (GstVideoAggregator * vagg,
       break;
     }
   }
+
+  self->reconfigured = FALSE;
   GST_OBJECT_UNLOCK (self);
   gst_d3d11_device_unlock (self->device);
 

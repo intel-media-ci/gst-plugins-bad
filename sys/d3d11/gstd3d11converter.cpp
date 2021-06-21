@@ -50,6 +50,12 @@ typedef struct
 
 typedef struct
 {
+  FLOAT alpha_mul;
+  FLOAT padding[3];
+} AlphaConstBuffer;
+
+typedef struct
+{
   struct {
     FLOAT x;
     FLOAT y;
@@ -63,16 +69,24 @@ typedef struct
 
 typedef struct
 {
-  const gchar *constant_buffer;
+  gboolean has_transform;
+  gboolean has_alpha;
   const gchar *func;
 } PixelShaderTemplate;
 
-#define COLOR_TRANSFORM_COEFF \
-    "cbuffer PixelShaderColorTransform : register(b0)\n" \
-    "{\n" \
-    "  float3x4 trans_matrix;\n" \
-    "  float3 padding;\n" \
-    "};\n"
+static const gchar templ_color_transform_const_buffer[] =
+    "cbuffer PixelShaderColorTransform : register(b%u)\n"
+    "{\n"
+    "  float3x4 trans_matrix;\n"
+    "  float3 padding;\n"
+    "};";
+
+static const gchar templ_alpha_const_buffer[] =
+    "cbuffer AlphaConstBuffer : register(b%u)\n"
+    "{\n"
+    "  float alpha_mul;\n"
+    "  float3 padding;\n"
+    "};";
 
 #define HLSL_FUNC_YUV_TO_RGB \
     "float3 yuv_to_rgb (float3 yuv)\n" \
@@ -99,18 +113,18 @@ typedef struct
     "  float4 Plane_1: SV_TARGET1;"
 
 static const PixelShaderTemplate templ_REORDER =
-    { NULL, NULL };
+    { FALSE, TRUE, NULL };
 
 static const PixelShaderTemplate templ_YUV_to_RGB =
-    { COLOR_TRANSFORM_COEFF, HLSL_FUNC_YUV_TO_RGB };
+    { TRUE, FALSE, HLSL_FUNC_YUV_TO_RGB };
 
 static const PixelShaderTemplate templ_RGB_to_YUV =
-    { COLOR_TRANSFORM_COEFF, HLSL_FUNC_RGB_TO_YUV };
+    { TRUE, FALSE, HLSL_FUNC_RGB_TO_YUV };
 
 static const gchar templ_REORDER_BODY[] =
     "  float4 xyza;\n"
     "  xyza.xyz = shaderTexture[0].Sample(samplerState, input.Texture).xyz;\n"
-    "  xyza.a = shaderTexture[0].Sample(samplerState, input.Texture).a * %f;\n"
+    "  xyza.a = shaderTexture[0].Sample(samplerState, input.Texture).a * alpha_mul;\n"
     "  output.Plane_0 = xyza;\n";
 
 static const gchar templ_VUYA_to_RGB_BODY[] =
@@ -142,9 +156,9 @@ static const gchar templ_PACKED_YUV_to_RGB_BODY[] =
 /* YUV to RGB conversion */
 static const gchar templ_PLANAR_YUV_to_RGB_BODY[] =
     "  float4 sample, rgba;\n"
-    "  sample.x  = shaderTexture[0].Sample(samplerState, input.Texture).x * %d;\n"
-    "  sample.y  = shaderTexture[1].Sample(samplerState, input.Texture).x * %d;\n"
-    "  sample.z  = shaderTexture[2].Sample(samplerState, input.Texture).x * %d;\n"
+    "  sample.x  = shaderTexture[0].Sample(samplerState, input.Texture).x * %u;\n"
+    "  sample.%c  = shaderTexture[1].Sample(samplerState, input.Texture).x * %u;\n"
+    "  sample.%c  = shaderTexture[2].Sample(samplerState, input.Texture).x * %u;\n"
     "  rgba.rgb = yuv_to_rgb (sample.xyz);\n"
     "  rgba.a = 1.0;\n"
     "  output.Plane_0 = rgba;\n";
@@ -152,7 +166,7 @@ static const gchar templ_PLANAR_YUV_to_RGB_BODY[] =
 static const gchar templ_SEMI_PLANAR_to_RGB_BODY[] =
     "  float4 sample, rgba;\n"
     "  sample.x  = shaderTexture[0].Sample(samplerState, input.Texture).x;\n"
-    "  sample.yz = shaderTexture[1].Sample(samplerState, input.Texture).xy;\n"
+    "  sample.yz = shaderTexture[1].Sample(samplerState, input.Texture).%c%c;\n"
     "  rgba.rgb = yuv_to_rgb (sample.xyz);\n"
     "  rgba.a = 1.0;\n"
     "  output.Plane_0 = rgba;\n";
@@ -172,8 +186,8 @@ static const gchar templ_RGB_to_SEMI_PLANAR_CHROMA_BODY[] =
     "  float4 sample, rgba;\n"
     "  rgba.rgb = shaderTexture[0].Sample(samplerState, input.Texture).rgb;\n"
     "  sample.xyz = rgb_to_yuv (rgba.rgb);\n"
-    "  sample.x = sample.y;\n"
-    "  sample.y = sample.z;\n"
+    "  sample.%c = sample.y;\n"
+    "  sample.%c = sample.z;\n"
     "  sample.z = 0.0;\n"
     "  sample.a = 0.0;\n"
     "  output.Plane_0 = sample;\n";
@@ -182,68 +196,70 @@ static const gchar templ_RGB_to_PLANAR_CHROMA_BODY[] =
     "  float4 sample, rgba;\n"
     "  rgba.rgb = shaderTexture[0].Sample(samplerState, input.Texture).rgb;\n"
     "  sample.xyz = rgb_to_yuv (rgba.rgb);\n"
-    "  output.Plane_0 = float4(sample.y / %d, 0.0, 0.0, 0.0);\n"
-    "  output.Plane_1 = float4(sample.z / %d, 0.0, 0.0, 0.0);\n";
+    "  output.Plane_0 = float4(sample.%c / %u, 0.0, 0.0, 0.0);\n"
+    "  output.Plane_1 = float4(sample.%c / %u, 0.0, 0.0, 0.0);\n";
 
 /* YUV to YUV conversion */
 static const gchar templ_LUMA_to_LUMA_BODY[] =
     "  float4 sample;\n"
-    "  sample.x = shaderTexture[0].Sample(samplerState, input.Texture).x * %d;\n"
-    "  output.Plane_0 = float4(sample.x / %d, 0.0, 0.0, 0.0);\n";
+    "  sample.x = shaderTexture[0].Sample(samplerState, input.Texture).x * %u;\n"
+    "  output.Plane_0 = float4(sample.x / %u, 0.0, 0.0, 0.0);\n";
 
 static const gchar templ_PLANAR_TO_SEMI_PLANAR_CHROMA_BODY[] =
-    "  float4 sample;\n"
-    "  sample.y = shaderTexture[1].Sample(samplerState, input.Texture).x * %d;\n"
-    "  sample.z = shaderTexture[2].Sample(samplerState, input.Texture).x * %d;\n"
-    "  output.Plane_0 = float4(sample.yz, 0.0, 0.0);\n";
+    "  float4 in_sample;\n"
+    "  float4 out_sample;\n"
+    "  in_sample.%c = shaderTexture[1].Sample(samplerState, input.Texture).x * %u;\n"
+    "  in_sample.%c = shaderTexture[2].Sample(samplerState, input.Texture).x * %u;\n"
+    "  out_sample.xy = in_sample.yz;\n"
+    "  output.Plane_0 = float4(out_sample.%c%c, 0.0, 0.0);\n";
 
 static const gchar templ_SEMI_PLANAR_TO_PLANAR_CHROMA_BODY[] =
     "  float4 sample;\n"
-    "  sample.yz = shaderTexture[1].Sample(samplerState, input.Texture).xy;\n"
-    "  output.Plane_0 = float4(sample.y / %d, 0.0, 0.0, 0.0);\n"
-    "  output.Plane_1 = float4(sample.z / %d, 0.0, 0.0, 0.0);\n";
+    "  sample.yz = shaderTexture[1].Sample(samplerState, input.Texture).%c%c;\n"
+    "  output.Plane_0 = float4(sample.%c / %d, 0.0, 0.0, 0.0);\n"
+    "  output.Plane_1 = float4(sample.%c / %d, 0.0, 0.0, 0.0);\n";
 
 static const gchar templ_SEMI_PLANAR_TO_SEMI_PLANAR_CHROMA_BODY[] =
     "  float4 sample;\n"
-    "  sample.yz = shaderTexture[1].Sample(samplerState, input.Texture).xy;\n"
-    "  output.Plane_0 = float4(sample.yz, 0.0, 0.0);\n";
+    "  sample.xy = shaderTexture[1].Sample(samplerState, input.Texture).%c%c;\n"
+    "  output.Plane_0 = float4(sample.%c%c, 0.0, 0.0);\n";
 
 static const gchar templ_PLANAR_TO_PLANAR_CHROMA_BODY[] =
     "  float4 sample;\n"
-    "  sample.y = shaderTexture[1].Sample(samplerState, input.Texture).x * %d;\n"
-    "  sample.z = shaderTexture[2].Sample(samplerState, input.Texture).x * %d;\n"
-    "  output.Plane_0 = float4(sample.y / %d, 0.0, 0.0, 0.0);\n"
-    "  output.Plane_1 = float4(sample.z / %d, 0.0, 0.0, 0.0);\n";
+    "  sample.%c = shaderTexture[1].Sample(samplerState, input.Texture).x * %u;\n"
+    "  sample.%c = shaderTexture[2].Sample(samplerState, input.Texture).x * %u;\n"
+    "  output.Plane_0 = float4(sample.%c / %u, 0.0, 0.0, 0.0);\n"
+    "  output.Plane_1 = float4(sample.%c / %u, 0.0, 0.0, 0.0);\n";
 
 /* VUYA to YUV */
 static const gchar templ_VUYA_to_LUMA_BODY[] =
     "  float4 sample;\n"
     "  sample.x = shaderTexture[0].Sample(samplerState, input.Texture).z;\n"
-    "  output.Plane_0 = float4(sample.x / %d, 0.0, 0.0, 0.0);\n";
+    "  output.Plane_0 = float4(sample.x / %u, 0.0, 0.0, 0.0);\n";
 
 static const gchar templ_VUYA_TO_PLANAR_CHROMA_BODY[] =
     "  float4 sample;\n"
     "  sample.yz = shaderTexture[0].Sample(samplerState, input.Texture).yx;\n"
-    "  output.Plane_0 = float4(sample.y / %d, 0.0, 0.0, 0.0);\n"
-    "  output.Plane_1 = float4(sample.z / %d, 0.0, 0.0, 0.0);\n";
+    "  output.Plane_0 = float4(sample.%c / %d, 0.0, 0.0, 0.0);\n"
+    "  output.Plane_1 = float4(sample.%c / %d, 0.0, 0.0, 0.0);\n";
 
 static const gchar templ_VUYA_TO_SEMI_PLANAR_CHROMA_BODY[] =
-    "  float4 sample;\n"
-    "  sample.yz = shaderTexture[0].Sample(samplerState, input.Texture).yx;\n"
-    "  output.Plane_0 = float4(sample.yz, 0.0, 0.0);\n";
+    "  float2 sample;\n"
+    "  sample.xy = shaderTexture[0].Sample(samplerState, input.Texture).%c%c;\n"
+    "  output.Plane_0 = float4(sample.xy, 0.0, 0.0);\n";
 
 /* YUV to VUYA */
 static const gchar templ_PLANAR_to_VUYA_BODY[] =
     "  float4 sample;\n"
-    "  sample.z = shaderTexture[0].Sample(samplerState, input.Texture).x * %d;\n"
-    "  sample.y = shaderTexture[1].Sample(samplerState, input.Texture).x * %d;\n"
-    "  sample.x = shaderTexture[2].Sample(samplerState, input.Texture).x * %d;\n"
-    "  output.Plane_0 = float4(sample.xyz, 1.0f);\n";
+    "  sample.x = shaderTexture[0].Sample(samplerState, input.Texture).x * %u;\n"
+    "  sample.%c = shaderTexture[1].Sample(samplerState, input.Texture).x * %u;\n"
+    "  sample.%c = shaderTexture[2].Sample(samplerState, input.Texture).x * %u;\n"
+    "  output.Plane_0 = float4(sample.zyx, 1.0f);\n";
 
 static const gchar templ_SEMI_PLANAR_to_VUYA_BODY[] =
     "  float4 sample;\n"
     "  sample.z = shaderTexture[0].Sample(samplerState, input.Texture).x;\n"
-    "  sample.xy = shaderTexture[1].Sample(samplerState, input.Texture).yx;\n"
+    "  sample.xy = shaderTexture[1].Sample(samplerState, input.Texture).%c%c;\n"
     "  output.Plane_0 = float4(sample.xyz, 1.0f);\n";
 
 static const gchar templ_PACKED_YUV_to_VUYA_BODY[] =
@@ -257,23 +273,24 @@ static const gchar templ_PACKED_YUV_to_VUYA_BODY[] =
 static const gchar templ_PACKED_YUV_to_LUMA_BODY[] =
     "  float4 sample;\n"
     "  sample.x = shaderTexture[0].Sample(samplerState, input.Texture).%c;\n"
-    "  output.Plane_0 = float4(sample.x / %d, 0.0, 0.0, 0.0);\n";
+    "  output.Plane_0 = float4(sample.x / %u, 0.0, 0.0, 0.0);\n";
 
 static const gchar templ_PACKED_YUV_TO_PLANAR_CHROMA_BODY[] =
     "  float4 sample;\n"
     "  sample.y = shaderTexture[0].Sample(samplerState, input.Texture).%c;\n"
     "  sample.z = shaderTexture[0].Sample(samplerState, input.Texture).%c;\n"
-    "  output.Plane_0 = float4(sample.y / %d, 0.0, 0.0, 0.0);\n"
-    "  output.Plane_1 = float4(sample.z / %d, 0.0, 0.0, 0.0);\n";
+    "  output.Plane_0 = float4(sample.%c / %u, 0.0, 0.0, 0.0);\n"
+    "  output.Plane_1 = float4(sample.%c / %u, 0.0, 0.0, 0.0);\n";
 
 static const gchar templ_PACKED_YUV_TO_SEMI_PLANAR_CHROMA_BODY[] =
     "  float4 sample;\n"
+    "  sample.x = shaderTexture[0].Sample(samplerState, input.Texture).%c;\n"
     "  sample.y = shaderTexture[0].Sample(samplerState, input.Texture).%c;\n"
-    "  sample.z = shaderTexture[0].Sample(samplerState, input.Texture).%c;\n"
-    "  output.Plane_0 = float4(sample.yz, 0.0, 0.0);\n";
+    "  output.Plane_0 = float4(sample.%c%c, 0.0, 0.0);\n";
 
 static const gchar templ_pixel_shader[] =
     /* constant buffer */
+    "%s\n"
     "%s\n"
     "Texture2D shaderTexture[4];\n"
     "SamplerState samplerState;\n"
@@ -331,7 +348,7 @@ struct _GstD3D11Converter
   GstD3D11Device *device;
   GstVideoInfo in_info;
   GstVideoInfo out_info;
-  gfloat alpha;
+  gdouble alpha;
 
   const GstD3D11Format *in_d3d11_format;
   const GstD3D11Format *out_d3d11_format;
@@ -348,10 +365,31 @@ struct _GstD3D11Converter
   gint input_texture_width;
   gint input_texture_height;
   ID3D11Buffer *vertex_buffer;
+  ID3D11Buffer *alpha_const_buffer;
   gboolean update_vertex;
+  gboolean update_alpha;
+
+  ID3D11SamplerState *linear_sampler;
 
   ConvertInfo convert_info;
+
+  GstStructure *config;
 };
+
+static gdouble
+get_opt_double (GstD3D11Converter * self, const gchar * opt, gdouble def)
+{
+  gdouble res;
+  if (!gst_structure_get_double (self->config, opt, &res))
+    res = def;
+
+  return res;
+}
+
+#define DEFAULT_OPT_ALPHA_VALUE 1.0
+
+#define GET_OPT_ALPHA_VALUE(c) get_opt_double(c, \
+    GST_D3D11_CONVERTER_OPT_ALPHA_VALUE, DEFAULT_OPT_ALPHA_VALUE);
 
 /* from video-converter.c */
 typedef struct
@@ -592,7 +630,7 @@ setup_convert_info_rgb_to_rgb (GstD3D11Converter * self,
   ConvertInfo *convert_info = &self->convert_info;
 
   convert_info->templ = &templ_REORDER;
-  convert_info->ps_body[0] = g_strdup_printf (templ_REORDER_BODY, self->alpha);
+  convert_info->ps_body[0] = g_strdup_printf (templ_REORDER_BODY);
   convert_info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
   return TRUE;
@@ -654,6 +692,36 @@ get_packed_yuv_components (GstD3D11Converter * self, GstVideoFormat
   return TRUE;
 }
 
+static void
+get_planar_component (const GstVideoInfo * info, gchar * u, gchar * v,
+    guint * scale)
+{
+  if (GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_I420_10LE)
+    *scale = 64;
+  else
+    *scale = 1;
+
+  if (GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_YV12) {
+    *u = 'z';
+    *v = 'y';
+  } else {
+    *u = 'y';
+    *v = 'z';
+  }
+}
+
+static void
+get_semi_planar_component (const GstVideoInfo * info, gchar * u, gchar * v)
+{
+  if (GST_VIDEO_INFO_FORMAT (info) == GST_VIDEO_FORMAT_NV21) {
+    *u = 'y';
+    *v = 'x';
+  } else {
+    *u = 'x';
+    *v = 'y';
+  }
+}
+
 static gboolean
 setup_convert_info_yuv_to_rgb (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
@@ -684,18 +752,30 @@ setup_convert_info_yuv_to_rgb (GstD3D11Converter * self,
       break;
     }
     case GST_VIDEO_FORMAT_I420:
-      info->ps_body[0] =
-          g_strdup_printf (templ_PLANAR_YUV_to_RGB_BODY, 1, 1, 1);
-      break;
+    case GST_VIDEO_FORMAT_YV12:
     case GST_VIDEO_FORMAT_I420_10LE:
+    {
+      guint mul;
+      gchar u, v;
+
+      get_planar_component (in_info, &u, &v, &mul);
+
       info->ps_body[0] =
-          g_strdup_printf (templ_PLANAR_YUV_to_RGB_BODY, 64, 64, 64);
+          g_strdup_printf (templ_PLANAR_YUV_to_RGB_BODY, mul, u, mul, v, mul);
       break;
+    }
     case GST_VIDEO_FORMAT_NV12:
+    case GST_VIDEO_FORMAT_NV21:
     case GST_VIDEO_FORMAT_P010_10LE:
     case GST_VIDEO_FORMAT_P016_LE:
-      info->ps_body[0] = g_strdup_printf (templ_SEMI_PLANAR_to_RGB_BODY);
+    {
+      gchar u, v;
+
+      get_semi_planar_component (in_info, &u, &v);
+
+      info->ps_body[0] = g_strdup_printf (templ_SEMI_PLANAR_to_RGB_BODY, u, v);
       break;
+    }
     default:
       GST_FIXME_OBJECT (self,
           "Unhandled input format %s",
@@ -720,24 +800,35 @@ setup_convert_info_rgb_to_yuv (GstD3D11Converter * self,
       info->ps_body[0] = g_strdup_printf (templ_RGB_to_VUYA_BODY);
       break;
     case GST_VIDEO_FORMAT_NV12:
+    case GST_VIDEO_FORMAT_NV21:
     case GST_VIDEO_FORMAT_P010_10LE:
     case GST_VIDEO_FORMAT_P016_LE:
+    {
+      gchar u, v;
+
+      get_semi_planar_component (out_info, &u, &v);
+
       info->ps_body[0] = g_strdup_printf (templ_RGB_to_LUMA_BODY, 1);
-      info->ps_body[1] = g_strdup_printf (templ_RGB_to_SEMI_PLANAR_CHROMA_BODY);
+      info->ps_body[1] = g_strdup_printf (templ_RGB_to_SEMI_PLANAR_CHROMA_BODY,
+          u, v);
       info->ps_output[1] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
       break;
+    }
     case GST_VIDEO_FORMAT_I420:
-      info->ps_body[0] = g_strdup_printf (templ_RGB_to_LUMA_BODY, 1);
-      info->ps_body[1] =
-          g_strdup_printf (templ_RGB_to_PLANAR_CHROMA_BODY, 1, 1);
-      info->ps_output[1] = HLSL_PS_OUTPUT_TWO_PLANES_BODY;
-      break;
+    case GST_VIDEO_FORMAT_YV12:
     case GST_VIDEO_FORMAT_I420_10LE:
-      info->ps_body[0] = g_strdup_printf (templ_RGB_to_LUMA_BODY, 64);
+    {
+      guint div;
+      gchar u, v;
+
+      get_planar_component (out_info, &u, &v, &div);
+
+      info->ps_body[0] = g_strdup_printf (templ_RGB_to_LUMA_BODY, div);
       info->ps_body[1] =
-          g_strdup_printf (templ_RGB_to_PLANAR_CHROMA_BODY, 64, 64);
+          g_strdup_printf (templ_RGB_to_PLANAR_CHROMA_BODY, u, div, v, div);
       info->ps_output[1] = HLSL_PS_OUTPUT_TWO_PLANES_BODY;
       break;
+    }
     default:
       GST_FIXME_OBJECT (self,
           "Unhandled output format %s",
@@ -753,22 +844,21 @@ setup_convert_info_planar_to_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint mul = 1;
-  gint div = 1;
+  guint in_scale, out_scale;
+  gchar in_u, in_v, out_u, out_v;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_TWO_PLANES_BODY;
 
-  if (GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_I420_10LE)
-    mul = 64;
+  get_planar_component (in_info, &in_u, &in_v, &in_scale);
+  get_planar_component (out_info, &out_u, &out_v, &out_scale);
 
-  if (GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_I420_10LE)
-    div = 64;
-
-  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, mul, div);
+  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY,
+      in_scale, out_scale);
   info->ps_body[1] =
-      g_strdup_printf (templ_PLANAR_TO_PLANAR_CHROMA_BODY, mul, mul, div, div);
+      g_strdup_printf (templ_PLANAR_TO_PLANAR_CHROMA_BODY,
+      in_u, in_scale, in_v, in_scale, out_u, out_scale, out_v, out_scale);
 
   return TRUE;
 }
@@ -778,19 +868,20 @@ setup_convert_info_planar_to_semi_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint mul = 1;
-  gint div = 1;
+  guint in_scale;
+  gchar in_u, in_v, out_u, out_v;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
-  if (GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_I420_10LE)
-    mul = 64;
+  get_planar_component (in_info, &in_u, &in_v, &in_scale);
+  get_semi_planar_component (out_info, &out_u, &out_v);
 
-  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, mul, div);
+  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, in_scale, 1);
   info->ps_body[1] =
-      g_strdup_printf (templ_PLANAR_TO_SEMI_PLANAR_CHROMA_BODY, mul, mul);
+      g_strdup_printf (templ_PLANAR_TO_SEMI_PLANAR_CHROMA_BODY,
+      in_u, in_scale, in_v, in_scale, out_u, out_v);
 
   return TRUE;
 }
@@ -800,19 +891,20 @@ setup_convert_info_semi_planar_to_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint mul = 1;
-  gint div = 1;
+  gchar in_u, in_v, out_u, out_v;
+  guint div = 1;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_TWO_PLANES_BODY;
 
-  if (GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_I420_10LE)
-    div = 64;
+  get_semi_planar_component (in_info, &in_u, &in_v);
+  get_planar_component (out_info, &out_u, &out_v, &div);
 
-  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, mul, div);
+  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, 1, div);
   info->ps_body[1] =
-      g_strdup_printf (templ_SEMI_PLANAR_TO_PLANAR_CHROMA_BODY, div, div);
+      g_strdup_printf (templ_SEMI_PLANAR_TO_PLANAR_CHROMA_BODY,
+      in_u, in_v, out_u, div, out_v, div);
 
   return TRUE;
 }
@@ -822,16 +914,19 @@ setup_convert_info_semi_planar_to_semi_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint mul = 1;
-  gint div = 1;
+  gchar in_u, in_v, out_u, out_v;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
-  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, mul, div);
+  get_semi_planar_component (in_info, &in_u, &in_v);
+  get_semi_planar_component (out_info, &out_u, &out_v);
+
+  info->ps_body[0] = g_strdup_printf (templ_LUMA_to_LUMA_BODY, 1, 1);
   info->ps_body[1] =
-      g_strdup_printf (templ_SEMI_PLANAR_TO_SEMI_PLANAR_CHROMA_BODY);
+      g_strdup_printf (templ_SEMI_PLANAR_TO_SEMI_PLANAR_CHROMA_BODY,
+      in_u, in_v, out_u, out_v);
 
   return TRUE;
 }
@@ -845,7 +940,7 @@ setup_convert_info_vuya_to_vuya (GstD3D11Converter * self,
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
-  info->ps_body[0] = g_strdup_printf (templ_REORDER_BODY, self->alpha);
+  info->ps_body[0] = g_strdup_printf (templ_REORDER_BODY);
 
   return TRUE;
 }
@@ -855,18 +950,18 @@ setup_convert_info_vuya_to_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint div = 1;
+  guint div;
+  gchar u, v;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_TWO_PLANES_BODY;
 
-  if (GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_I420_10LE)
-    div = 64;
+  get_planar_component (out_info, &u, &v, &div);
 
   info->ps_body[0] = g_strdup_printf (templ_VUYA_to_LUMA_BODY, div);
   info->ps_body[1] =
-      g_strdup_printf (templ_VUYA_TO_PLANAR_CHROMA_BODY, div, div);
+      g_strdup_printf (templ_VUYA_TO_PLANAR_CHROMA_BODY, u, div, v, div);
 
   return TRUE;
 }
@@ -876,14 +971,18 @@ setup_convert_info_vuya_to_semi_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint div = 1;
+  guint div = 1;
+  gchar u, v;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
+  get_semi_planar_component (out_info, &u, &v);
+
   info->ps_body[0] = g_strdup_printf (templ_VUYA_to_LUMA_BODY, div);
-  info->ps_body[1] = g_strdup_printf (templ_VUYA_TO_SEMI_PLANAR_CHROMA_BODY);
+  info->ps_body[1] =
+      g_strdup_printf (templ_VUYA_TO_SEMI_PLANAR_CHROMA_BODY, v, u);
 
   return TRUE;
 }
@@ -893,15 +992,16 @@ setup_convert_info_planar_to_vuya (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint mul = 1;
+  guint mul;
+  gchar u, v;
+
+  get_planar_component (in_info, &u, &v, &mul);
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
-  if (GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_I420_10LE)
-    mul = 64;
-
-  info->ps_body[0] = g_strdup_printf (templ_PLANAR_to_VUYA_BODY, mul, mul, mul);
+  info->ps_body[0] =
+      g_strdup_printf (templ_PLANAR_to_VUYA_BODY, mul, u, mul, v, mul);
 
   return TRUE;
 }
@@ -931,11 +1031,14 @@ setup_convert_info_semi_planar_to_vuya (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
+  gchar u, v;
+
+  get_semi_planar_component (in_info, &u, &v);
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
-  info->ps_body[0] = g_strdup_printf (templ_SEMI_PLANAR_to_VUYA_BODY);
+  info->ps_body[0] = g_strdup_printf (templ_SEMI_PLANAR_to_VUYA_BODY, v, u);
 
   return TRUE;
 }
@@ -945,24 +1048,26 @@ setup_convert_info_packed_yuv_to_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint div = 1;
-  gchar y, u, v;
+  gchar in_y, in_u, in_v;
+  gchar out_u, out_v;
+  guint out_scale;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_TWO_PLANES_BODY;
 
-  if (GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_I420_10LE)
-    div = 64;
-
   if (!get_packed_yuv_components (self, GST_VIDEO_INFO_FORMAT (in_info),
-          &y, &u, &v)) {
+          &in_y, &in_u, &in_v)) {
     return FALSE;
   }
 
-  info->ps_body[0] = g_strdup_printf (templ_PACKED_YUV_to_LUMA_BODY, y, div);
+  get_planar_component (out_info, &out_u, &out_v, &out_scale);
+
+  info->ps_body[0] =
+      g_strdup_printf (templ_PACKED_YUV_to_LUMA_BODY, in_y, out_scale);
   info->ps_body[1] =
-      g_strdup_printf (templ_PACKED_YUV_TO_PLANAR_CHROMA_BODY, u, v, div, div);
+      g_strdup_printf (templ_PACKED_YUV_TO_PLANAR_CHROMA_BODY, in_u, in_v,
+      out_u, out_scale, out_v, out_scale);
 
   return TRUE;
 }
@@ -972,23 +1077,41 @@ setup_convert_info_packed_yuv_to_semi_planar (GstD3D11Converter * self,
     const GstVideoInfo * in_info, const GstVideoInfo * out_info)
 {
   ConvertInfo *info = &self->convert_info;
-  gint div = 1;
-  gchar y, u, v;
+  gchar in_y, in_u, in_v;
+  gchar out_u, out_v;
 
   info->templ = &templ_REORDER;
   info->ps_output[0] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
   info->ps_output[1] = HLSL_PS_OUTPUT_ONE_PLANE_BODY;
 
   if (!get_packed_yuv_components (self, GST_VIDEO_INFO_FORMAT (in_info),
-          &y, &u, &v)) {
+          &in_y, &in_u, &in_v)) {
     return FALSE;
   }
 
-  info->ps_body[0] = g_strdup_printf (templ_PACKED_YUV_to_LUMA_BODY, y, div);
+  get_semi_planar_component (out_info, &out_u, &out_v);
+
+  info->ps_body[0] = g_strdup_printf (templ_PACKED_YUV_to_LUMA_BODY, in_y, 1);
   info->ps_body[1] =
-      g_strdup_printf (templ_PACKED_YUV_TO_SEMI_PLANAR_CHROMA_BODY, u, v);
+      g_strdup_printf (templ_PACKED_YUV_TO_SEMI_PLANAR_CHROMA_BODY,
+      in_u, in_v, out_u, out_v);
 
   return TRUE;
+}
+
+static gboolean
+is_planar_format (const GstVideoInfo * info)
+{
+  switch (GST_VIDEO_INFO_FORMAT (info)) {
+    case GST_VIDEO_FORMAT_I420:
+    case GST_VIDEO_FORMAT_YV12:
+    case GST_VIDEO_FORMAT_I420_10LE:
+      return TRUE;
+    default:
+      break;
+  }
+
+  return FALSE;
 }
 
 static gboolean
@@ -1001,15 +1124,13 @@ setup_convert_info_yuv_to_yuv (GstD3D11Converter * self,
 
   in_vuya = GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_VUYA;
   out_vuya = GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_VUYA;
-  in_planar = (GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_I420 ||
-      GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_I420_10LE);
+  in_planar = is_planar_format (in_info);
   in_packed = (GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_YUY2 ||
       GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_UYVY ||
       GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_VYUY ||
       GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_Y210 ||
       GST_VIDEO_INFO_FORMAT (in_info) == GST_VIDEO_FORMAT_Y410);
-  out_planar = (GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_I420 ||
-      GST_VIDEO_INFO_FORMAT (out_info) == GST_VIDEO_FORMAT_I420_10LE);
+  out_planar = is_planar_format (out_info);
 
   /* From/to VUYA */
   if (in_vuya && out_vuya) {
@@ -1068,14 +1189,17 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
   ComPtr<ID3D11PixelShader> ps[CONVERTER_MAX_QUADS];
   ComPtr<ID3D11VertexShader> vs;
   ComPtr<ID3D11InputLayout> layout;
-  ComPtr<ID3D11SamplerState> sampler;
-  ComPtr<ID3D11Buffer> const_buffer;
+  ComPtr<ID3D11SamplerState> linear_sampler;
+  ComPtr<ID3D11Buffer> transform_const_buffer;
+  ComPtr<ID3D11Buffer> alpha_const_buffer;
   ComPtr<ID3D11Buffer> vertex_buffer;
   ComPtr<ID3D11Buffer> index_buffer;
   /* *INDENT-ON* */
   const guint index_count = 2 * 3;
   gint i;
   gboolean ret;
+  ID3D11Buffer *const_buffers[2] = { nullptr, nullptr };
+  guint num_const_buffers = 0;
 
   memset (&sampler_desc, 0, sizeof (sampler_desc));
   memset (input_desc, 0, sizeof (input_desc));
@@ -1093,7 +1217,7 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
   sampler_desc.MinLOD = 0;
   sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
 
-  hr = device_handle->CreateSamplerState (&sampler_desc, &sampler);
+  hr = device_handle->CreateSamplerState (&sampler_desc, &linear_sampler);
   if (!gst_d3d11_result (hr, device)) {
     GST_ERROR ("Couldn't create sampler state, hr: 0x%x", (guint) hr);
     return FALSE;
@@ -1103,14 +1227,32 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
     gchar *shader_code = NULL;
 
     if (convert_info->ps_body[i]) {
+      gchar *transform_const_buffer = nullptr;
+      gchar *alpha_const_buffer = nullptr;
+      guint register_idx = 0;
+
       g_assert (convert_info->ps_output[i] != NULL);
 
+      if (convert_info->templ->has_transform) {
+        transform_const_buffer =
+            g_strdup_printf (templ_color_transform_const_buffer, register_idx);
+        register_idx++;
+      }
+
+      if (convert_info->templ->has_alpha) {
+        alpha_const_buffer =
+            g_strdup_printf (templ_alpha_const_buffer, register_idx);
+        register_idx++;
+      }
+
       shader_code = g_strdup_printf (templ_pixel_shader,
-          convert_info->templ->constant_buffer ?
-          convert_info->templ->constant_buffer : "",
+          transform_const_buffer ? transform_const_buffer : "",
+          alpha_const_buffer ? alpha_const_buffer : "",
           convert_info->ps_output[i],
           convert_info->templ->func ? convert_info->templ->func : "",
           convert_info->ps_body[i]);
+      g_free (transform_const_buffer);
+      g_free (alpha_const_buffer);
 
       ret = gst_d3d11_create_pixel_shader (device, shader_code, &ps[i]);
       g_free (shader_code);
@@ -1120,8 +1262,10 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
     }
   }
 
-  if (convert_info->templ->constant_buffer) {
+  if (convert_info->templ->has_transform) {
     D3D11_BUFFER_DESC const_buffer_desc = { 0, };
+
+    G_STATIC_ASSERT (sizeof (PixelShaderColorTransform) % 16 == 0);
 
     const_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
     const_buffer_desc.ByteWidth = sizeof (PixelShaderColorTransform);
@@ -1130,14 +1274,15 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
     const_buffer_desc.MiscFlags = 0;
     const_buffer_desc.StructureByteStride = 0;
 
-    hr = device_handle->CreateBuffer (&const_buffer_desc, NULL, &const_buffer);
+    hr = device_handle->CreateBuffer (&const_buffer_desc, nullptr,
+        &transform_const_buffer);
     if (!gst_d3d11_result (hr, device)) {
       GST_ERROR ("Couldn't create constant buffer, hr: 0x%x", (guint) hr);
       return FALSE;
     }
 
     gst_d3d11_device_lock (device);
-    hr = context_handle->Map (const_buffer.Get (),
+    hr = context_handle->Map (transform_const_buffer.Get (),
         0, D3D11_MAP_WRITE_DISCARD, 0, &map);
 
     if (!gst_d3d11_result (hr, device)) {
@@ -1149,8 +1294,55 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
     memcpy (map.pData, &convert_info->transform,
         sizeof (PixelShaderColorTransform));
 
-    context_handle->Unmap (const_buffer.Get (), 0);
+    context_handle->Unmap (transform_const_buffer.Get (), 0);
     gst_d3d11_device_unlock (device);
+
+    const_buffers[num_const_buffers] = transform_const_buffer.Get ();
+    num_const_buffers++;
+  }
+
+  if (convert_info->templ->has_alpha) {
+    D3D11_BUFFER_DESC const_buffer_desc = { 0, };
+    AlphaConstBuffer *alpha_const;
+
+    G_STATIC_ASSERT (sizeof (AlphaConstBuffer) % 16 == 0);
+
+    const_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+    const_buffer_desc.ByteWidth = sizeof (AlphaConstBuffer);
+    const_buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    const_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    const_buffer_desc.MiscFlags = 0;
+    const_buffer_desc.StructureByteStride = 0;
+
+    hr = device_handle->CreateBuffer (&const_buffer_desc,
+        nullptr, &alpha_const_buffer);
+    if (!gst_d3d11_result (hr, device)) {
+      GST_ERROR ("Couldn't create constant buffer, hr: 0x%x", (guint) hr);
+      return FALSE;
+    }
+
+    gst_d3d11_device_lock (device);
+    hr = context_handle->Map (alpha_const_buffer.Get (),
+        0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+
+    if (!gst_d3d11_result (hr, device)) {
+      GST_ERROR ("Couldn't map constant buffer, hr: 0x%x", (guint) hr);
+      gst_d3d11_device_unlock (device);
+      return FALSE;
+    }
+
+    alpha_const = (AlphaConstBuffer *) map.pData;
+    memset (alpha_const, 0, sizeof (AlphaConstBuffer));
+    alpha_const->alpha_mul = (FLOAT) self->alpha;
+
+    context_handle->Unmap (alpha_const_buffer.Get (), 0);
+    gst_d3d11_device_unlock (device);
+
+    self->alpha_const_buffer = alpha_const_buffer.Get ();
+    /* We will hold this buffer and update later */
+    self->alpha_const_buffer->AddRef ();
+    const_buffers[num_const_buffers] = alpha_const_buffer.Get ();
+    num_const_buffers++;
   }
 
   input_desc[0].SemanticName = "POSITION";
@@ -1262,14 +1454,16 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
   gst_d3d11_device_unlock (device);
 
   self->quad[0] = gst_d3d11_quad_new (device,
-      ps[0].Get (), vs.Get (), layout.Get (), sampler.Get (), NULL, NULL,
-      const_buffer.Get (), vertex_buffer.Get (), sizeof (VertexData),
+      ps[0].Get (), vs.Get (), layout.Get (),
+      const_buffers, num_const_buffers,
+      vertex_buffer.Get (), sizeof (VertexData),
       index_buffer.Get (), DXGI_FORMAT_R16_UINT, index_count);
 
   if (ps[1]) {
     self->quad[1] = gst_d3d11_quad_new (device,
-        ps[1].Get (), vs.Get (), layout.Get (), sampler.Get (), NULL, NULL,
-        const_buffer.Get (), vertex_buffer.Get (), sizeof (VertexData),
+        ps[1].Get (), vs.Get (), layout.Get (),
+        const_buffers, num_const_buffers,
+        vertex_buffer.Get (), sizeof (VertexData),
         index_buffer.Get (), DXGI_FORMAT_R16_UINT, index_count);
   }
 
@@ -1292,12 +1486,33 @@ gst_d3d11_color_convert_setup_shader (GstD3D11Converter * self,
   self->input_texture_width = GST_VIDEO_INFO_WIDTH (in_info);
   self->input_texture_height = GST_VIDEO_INFO_HEIGHT (in_info);
 
+  self->linear_sampler = linear_sampler.Detach ();
+
   return TRUE;
 }
 
-static GstD3D11Converter *
-gst_d3d11_converter_new_internal (GstD3D11Device * device,
-    GstVideoInfo * in_info, GstVideoInfo * out_info, gfloat alpha)
+static gboolean
+copy_config (GQuark field_id, const GValue * value, GstD3D11Converter * self)
+{
+  gst_structure_id_set_value (self->config, field_id, value);
+
+  return TRUE;
+}
+
+static gboolean
+gst_d3d11_converter_set_config (GstD3D11Converter * converter,
+    GstStructure * config)
+{
+  gst_structure_foreach (config, (GstStructureForeachFunc) copy_config,
+      converter);
+  gst_structure_free (config);
+
+  return TRUE;
+}
+
+GstD3D11Converter *
+gst_d3d11_converter_new (GstD3D11Device * device,
+    GstVideoInfo * in_info, GstVideoInfo * out_info, GstStructure * config)
 {
   const GstVideoInfo *unknown_info;
   const GstD3D11Format *in_d3d11_format;
@@ -1334,7 +1549,11 @@ gst_d3d11_converter_new_internal (GstD3D11Device * device,
 
   converter = g_new0 (GstD3D11Converter, 1);
   converter->device = (GstD3D11Device *) gst_object_ref (device);
-  converter->alpha = alpha;
+  converter->config = gst_structure_new_empty ("GstD3D11Converter-Config");
+  if (config)
+    gst_d3d11_converter_set_config (converter, config);
+
+  converter->alpha = GET_OPT_ALPHA_VALUE (converter);
 
   if (GST_VIDEO_INFO_IS_RGB (in_info)) {
     if (GST_VIDEO_INFO_IS_RGB (out_info)) {
@@ -1404,6 +1623,9 @@ format_unknown:
   {
     GST_ERROR ("%s couldn't be converted to d3d11 format",
         gst_video_format_to_string (GST_VIDEO_INFO_FORMAT (unknown_info)));
+    if (config)
+      gst_structure_free (config);
+
     return NULL;
   }
 conversion_not_supported:
@@ -1414,23 +1636,6 @@ conversion_not_supported:
     gst_d3d11_converter_free (converter);
     return NULL;
   }
-}
-
-GstD3D11Converter *
-gst_d3d11_converter_new (GstD3D11Device * device,
-    GstVideoInfo * in_info, GstVideoInfo * out_info)
-{
-  return gst_d3d11_converter_new_internal (device, in_info, out_info, 1.0f);
-}
-
-GstD3D11Converter *
-gst_d3d11_converter_new_with_alpha (GstD3D11Device * device,
-    GstVideoInfo * in_info, GstVideoInfo * out_info, gfloat alpha)
-{
-  g_return_val_if_fail (alpha >= 0.0f, NULL);
-  g_return_val_if_fail (alpha <= 1.0f, NULL);
-
-  return gst_d3d11_converter_new_internal (device, in_info, out_info, alpha);
 }
 
 void
@@ -1448,8 +1653,14 @@ gst_d3d11_converter_free (GstD3D11Converter * converter)
   }
 
   GST_D3D11_CLEAR_COM (converter->vertex_buffer);
+  GST_D3D11_CLEAR_COM (converter->linear_sampler);
+  GST_D3D11_CLEAR_COM (converter->alpha_const_buffer);
 
   gst_clear_object (&converter->device);
+
+  if (converter->config)
+    gst_structure_free (converter->config);
+
   g_free (converter);
 }
 
@@ -1603,8 +1814,35 @@ gst_d3d11_converter_convert_unlocked (GstD3D11Converter * converter,
     }
   }
 
+  if (converter->update_alpha) {
+    D3D11_MAPPED_SUBRESOURCE map;
+    ID3D11DeviceContext *context_handle;
+    AlphaConstBuffer *alpha_const;
+    HRESULT hr;
+
+    g_assert (converter->alpha_const_buffer != nullptr);
+
+    context_handle =
+        gst_d3d11_device_get_device_context_handle (converter->device);
+
+    hr = context_handle->Map (converter->alpha_const_buffer,
+        0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+
+    if (!gst_d3d11_result (hr, converter->device)) {
+      GST_ERROR ("Couldn't map constant buffer, hr: 0x%x", (guint) hr);
+      return FALSE;
+    }
+
+    alpha_const = (AlphaConstBuffer *) map.pData;
+    alpha_const->alpha_mul = (FLOAT) converter->alpha;
+
+    context_handle->Unmap (converter->alpha_const_buffer, 0);
+    converter->update_alpha = FALSE;
+  }
+
   ret = gst_d3d11_draw_quad_unlocked (converter->quad[0], converter->viewport,
-      1, srv, converter->num_input_view, rtv, 1, NULL, blend, blend_factor);
+      1, srv, converter->num_input_view, rtv, 1, blend, blend_factor,
+      &converter->linear_sampler, 1);
 
   if (!ret)
     return FALSE;
@@ -1613,7 +1851,7 @@ gst_d3d11_converter_convert_unlocked (GstD3D11Converter * converter,
     ret = gst_d3d11_draw_quad_unlocked (converter->quad[1],
         &converter->viewport[1], converter->num_output_view - 1,
         srv, converter->num_input_view, &rtv[1], converter->num_output_view - 1,
-        NULL, blend, blend_factor);
+        blend, blend_factor, &converter->linear_sampler, 1);
 
     if (!ret)
       return FALSE;
@@ -1633,10 +1871,13 @@ gst_d3d11_converter_update_viewport (GstD3D11Converter * converter,
 
   switch (GST_VIDEO_INFO_FORMAT (&converter->out_info)) {
     case GST_VIDEO_FORMAT_NV12:
+    case GST_VIDEO_FORMAT_NV21:
     case GST_VIDEO_FORMAT_P010_10LE:
     case GST_VIDEO_FORMAT_P016_LE:
     case GST_VIDEO_FORMAT_I420:
-    case GST_VIDEO_FORMAT_I420_10LE:{
+    case GST_VIDEO_FORMAT_YV12:
+    case GST_VIDEO_FORMAT_I420_10LE:
+    {
       guint i;
       converter->viewport[1].TopLeftX = converter->viewport[0].TopLeftX / 2;
       converter->viewport[1].TopLeftY = converter->viewport[0].TopLeftY / 2;
@@ -1664,6 +1905,7 @@ gst_d3d11_converter_update_src_rect (GstD3D11Converter * converter,
   g_return_val_if_fail (converter != NULL, FALSE);
   g_return_val_if_fail (src_rect != NULL, FALSE);
 
+  gst_d3d11_device_lock (converter->device);
   if (converter->src_rect.left != src_rect->left ||
       converter->src_rect.top != src_rect->top ||
       converter->src_rect.right != src_rect->right ||
@@ -1673,6 +1915,7 @@ gst_d3d11_converter_update_src_rect (GstD3D11Converter * converter,
     /* vertex buffer will be updated on next convert() call */
     converter->update_vertex = TRUE;
   }
+  gst_d3d11_device_unlock (converter->device);
 
   return TRUE;
 }
@@ -1684,6 +1927,7 @@ gst_d3d11_converter_update_dest_rect (GstD3D11Converter * converter,
   g_return_val_if_fail (converter != NULL, FALSE);
   g_return_val_if_fail (dest_rect != NULL, FALSE);
 
+  gst_d3d11_device_lock (converter->device);
   if (converter->dest_rect.left != dest_rect->left ||
       converter->dest_rect.top != dest_rect->top ||
       converter->dest_rect.right != dest_rect->right ||
@@ -1693,6 +1937,32 @@ gst_d3d11_converter_update_dest_rect (GstD3D11Converter * converter,
     /* vertex buffer will be updated on next convert() call */
     converter->update_vertex = TRUE;
   }
+  gst_d3d11_device_unlock (converter->device);
+
+  return TRUE;
+}
+
+gboolean
+gst_d3d11_converter_update_config (GstD3D11Converter * converter,
+    GstStructure * config)
+{
+  g_return_val_if_fail (converter != nullptr, FALSE);
+  g_return_val_if_fail (config != nullptr, FALSE);
+
+  gst_d3d11_device_lock (converter->device);
+  gst_d3d11_converter_set_config (converter, config);
+
+  /* Check whether options are updated or not */
+  if (converter->alpha_const_buffer) {
+    gdouble alpha = GET_OPT_ALPHA_VALUE (converter);
+
+    if (alpha != converter->alpha) {
+      GST_DEBUG ("Updating alpha %lf -> %lf", converter->alpha, alpha);
+      converter->alpha = alpha;
+      converter->update_alpha = TRUE;
+    }
+  }
+  gst_d3d11_device_unlock (converter->device);
 
   return TRUE;
 }

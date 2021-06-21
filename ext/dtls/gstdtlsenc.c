@@ -565,6 +565,9 @@ sink_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
         GST_ELEMENT_ERROR (self, RESOURCE, WRITE, (NULL), ("%s", err->message));
         g_clear_error (&err);
         break;
+      case GST_FLOW_FLUSHING:
+        GST_INFO_OBJECT (self, "Flushing");
+        break;
       default:
         g_assert_not_reached ();
         break;
@@ -629,7 +632,7 @@ static void
 on_key_received (GstDtlsConnection * connection, gpointer key, guint cipher,
     guint auth, GstDtlsEnc * self)
 {
-  gpointer key_dup;
+  GstBuffer *new_encoder_key;
   gchar *key_str;
 
   g_return_if_fail (GST_IS_DTLS_ENC (self));
@@ -638,15 +641,13 @@ on_key_received (GstDtlsConnection * connection, gpointer key, guint cipher,
   self->srtp_cipher = cipher;
   self->srtp_auth = auth;
 
-  key_dup = g_memdup (key, GST_DTLS_SRTP_MASTER_KEY_LENGTH);
+  new_encoder_key =
+      gst_buffer_new_memdup (key, GST_DTLS_SRTP_MASTER_KEY_LENGTH);
 
-  if (self->encoder_key) {
+  if (self->encoder_key)
     gst_buffer_unref (self->encoder_key);
-    self->encoder_key = NULL;
-  }
 
-  self->encoder_key =
-      gst_buffer_new_wrapped (key_dup, GST_DTLS_SRTP_MASTER_KEY_LENGTH);
+  self->encoder_key = new_encoder_key;
 
   key_str = g_base64_encode (key, GST_DTLS_SRTP_MASTER_KEY_LENGTH);
   GST_INFO_OBJECT (self, "received key: %s", key_str);
@@ -665,8 +666,7 @@ on_send_data (GstDtlsConnection * connection, gconstpointer data, gsize length,
   GST_DEBUG_OBJECT (self, "sending data from %s with length %" G_GSIZE_FORMAT,
       self->connection_id, length);
 
-  buffer =
-      data ? gst_buffer_new_wrapped (g_memdup (data, length), length) : NULL;
+  buffer = data ? gst_buffer_new_memdup (data, length) : NULL;
 
   GST_TRACE_OBJECT (self, "send data: acquiring lock");
   g_mutex_lock (&self->queue_lock);
@@ -680,6 +680,8 @@ on_send_data (GstDtlsConnection * connection, gconstpointer data, gsize length,
   GST_TRACE_OBJECT (self, "send data: releasing lock");
 
   ret = self->src_ret == GST_FLOW_OK;
+  if (self->src_ret == GST_FLOW_FLUSHING)
+    gst_dtls_connection_set_flow_return (connection, self->src_ret);
   g_mutex_unlock (&self->queue_lock);
 
   return ret;

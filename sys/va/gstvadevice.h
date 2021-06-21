@@ -24,7 +24,7 @@
 
 G_BEGIN_DECLS
 
-#include "gstvadisplay.h"
+#include <gst/va/gstvadisplay_drm.h>
 
 #define GST_TYPE_VA_DEVICE    (gst_va_device_get_type())
 #define GST_IS_VA_DEVICE(obj) (GST_IS_MINI_OBJECT_TYPE((obj), GST_TYPE_VA_DEVICE))
