@@ -272,6 +272,8 @@ gst_msdkvp9enc_class_init (GstMsdkVP9EncClass * klass)
   encoder_class->set_format = gst_msdkvp9enc_set_format;
   encoder_class->configure = gst_msdkvp9enc_configure;
   encoder_class->set_src_caps = gst_msdkvp9enc_set_src_caps;
+  encoder_class->max_qp = 255;
+  encoder_class->min_qp = 0;
 
   gst_msdkenc_install_common_properties (encoder_class);
 

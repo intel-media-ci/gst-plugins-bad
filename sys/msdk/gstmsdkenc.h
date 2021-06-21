@@ -186,6 +186,9 @@ struct _GstMsdkEncClass
 
   /* Allow sub class set extra frame parameters */
   void (*set_extra_params) (GstMsdkEnc * encoder, GstVideoCodecFrame * frame);
+
+  guint max_qp;
+  guint min_qp;
 };
 
 struct _MsdkEncTask
