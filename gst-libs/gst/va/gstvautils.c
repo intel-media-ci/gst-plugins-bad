@@ -41,6 +41,12 @@ _init_context_debug (void)
 #endif
 }
 
+static gboolean gst_context_get_va_display (GstContext * context,
+    const gchar * type_name, const gchar * render_device_path,
+    GstVaDisplay ** display_ptr);
+static void gst_context_set_va_display (GstContext * context,
+    GstVaDisplay * display);
+
 static gboolean
 gst_va_display_found (GstElement * element, GstVaDisplay * display)
 {
@@ -99,8 +105,8 @@ _gst_va_run_query (GstElement * element, GstQuery * query,
   return g_value_get_boolean (&res);
 }
 
-static void
-_gst_context_query (GstElement * element, const gchar * context_type)
+void
+gst_va_context_query (GstElement * element, const gchar * context_type)
 {
   GstQuery *query;
   GstContext *ctxt = NULL;
@@ -189,7 +195,7 @@ gst_va_ensure_element_data (gpointer element, const gchar * render_device_path,
   if (gst_va_display_found (element, g_atomic_pointer_get (display_ptr)))
     goto done;
 
-  _gst_context_query (element, GST_VA_DISPLAY_HANDLE_CONTEXT_TYPE_STR);
+  gst_va_context_query (element, GST_VA_DISPLAY_HANDLE_CONTEXT_TYPE_STR);
 
   /* Neighbour found and it updated the display */
   if (gst_va_display_found (element, g_atomic_pointer_get (display_ptr)))
@@ -278,7 +284,7 @@ gst_va_handle_context_query (GstElement * element, GstQuery * query,
   return TRUE;
 }
 
-gboolean
+static gboolean
 gst_context_get_va_display (GstContext * context, const gchar * type_name,
     const gchar * render_device_path, GstVaDisplay ** display_ptr)
 {
@@ -333,7 +339,7 @@ accept:
   }
 }
 
-void
+static void
 gst_context_set_va_display (GstContext * context, GstVaDisplay * display)
 {
   GstStructure *s;
