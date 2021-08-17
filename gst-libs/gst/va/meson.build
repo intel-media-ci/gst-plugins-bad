@@ -37,7 +37,6 @@ if not (libva_dep.found() and libva_drm_dep.found() and libgudev_dep.found())
   subdir_done()
 endif
 
-
 gstva = library('gstva-' + api_version,
   va_sources,
   c_args : gst_plugins_bad_args + ['-DGST_USE_UNSTABLE_API', '-DBUILDING_GST_VA'],
