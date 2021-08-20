@@ -34,10 +34,20 @@
 GST_DEBUG_CATEGORY (gst_av1_decoder_debug);
 #define GST_CAT_DEFAULT gst_av1_decoder_debug
 
+/* properties */
+#define DEFAULT_OPPOINT 0
+
+enum
+{
+  PROP_0,
+  PROP_OPPOINT
+};
+
 struct _GstAV1DecoderPrivate
 {
   gint max_width;
   gint max_height;
+  guint32 operating_point;
   GstAV1Profile profile;
   GstAV1Parser *parser;
   GstAV1Dpb *dpb;
@@ -52,6 +62,18 @@ G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GstAV1Decoder, gst_av1_decoder,
     GST_DEBUG_CATEGORY_INIT (gst_av1_decoder_debug, "av1decoder", 0,
         "AV1 Video Decoder"));
 
+static gint
+_floor_log2 (guint32 x)
+{
+  gint s = 0;
+
+  while (x != 0) {
+    x = x >> 1;
+    s++;
+  }
+  return s - 1;
+}
+
 static gboolean gst_av1_decoder_start (GstVideoDecoder * decoder);
 static gboolean gst_av1_decoder_stop (GstVideoDecoder * decoder);
 static gboolean gst_av1_decoder_set_format (GstVideoDecoder * decoder,
@@ -65,10 +87,21 @@ static GstFlowReturn gst_av1_decoder_handle_frame (GstVideoDecoder * decoder,
 static GstAV1Picture *gst_av1_decoder_duplicate_picture_default (GstAV1Decoder *
     decoder, GstAV1Picture * picture);
 
+static void gst_av1_decoder_get_property (GObject * object, guint property_id,
+    GValue * value, GParamSpec * pspec);
+static void gst_av1_decoder_set_property (GObject * object, guint property_id,
+    const GValue * value, GParamSpec * pspec);
+
 static void
 gst_av1_decoder_class_init (GstAV1DecoderClass * klass)
 {
+  GObjectClass *gobject_class;
+
+  gobject_class = G_OBJECT_CLASS (klass);
   GstVideoDecoderClass *decoder_class = GST_VIDEO_DECODER_CLASS (klass);
+
+  gobject_class->get_property = gst_av1_decoder_get_property;
+  gobject_class->set_property = gst_av1_decoder_set_property;
 
   decoder_class->start = GST_DEBUG_FUNCPTR (gst_av1_decoder_start);
   decoder_class->stop = GST_DEBUG_FUNCPTR (gst_av1_decoder_stop);
@@ -81,6 +114,11 @@ gst_av1_decoder_class_init (GstAV1DecoderClass * klass)
 
   klass->duplicate_picture =
       GST_DEBUG_FUNCPTR (gst_av1_decoder_duplicate_picture_default);
+
+  g_object_class_install_property (gobject_class, PROP_OPPOINT,
+      g_param_spec_int ("oppoint", "Operating Point",
+          "Choose an operating point for a scalable stream",
+          0, 31, DEFAULT_OPPOINT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 }
 
 static void
@@ -89,6 +127,7 @@ gst_av1_decoder_init (GstAV1Decoder * self)
   gst_video_decoder_set_packetized (GST_VIDEO_DECODER (self), TRUE);
 
   self->priv = gst_av1_decoder_get_instance_private (self);
+  self->priv->operating_point = DEFAULT_OPPOINT;
 }
 
 static void
@@ -196,6 +235,38 @@ gst_av1_decoder_duplicate_picture_default (GstAV1Decoder * decoder,
   new_picture = gst_av1_picture_new ();
 
   return new_picture;
+}
+
+static void
+gst_av1_decoder_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
+{
+  GstAV1Decoder *self = GST_AV1_DECODER (object);
+
+  switch (prop_id) {
+    case PROP_OPPOINT:
+      g_value_set_int (value, self->priv->operating_point);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_av1_decoder_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstAV1Decoder *self = GST_AV1_DECODER (object);
+
+  switch (prop_id) {
+    case PROP_OPPOINT:
+      self->priv->operating_point = g_value_get_int (value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
 }
 
 static const gchar *
@@ -550,6 +621,8 @@ gst_av1_decoder_handle_frame (GstVideoDecoder * decoder,
     return ret;
   }
 
+  gst_av1_parser_set_operating_point (priv->parser, priv->operating_point);
+
   total_consumed = 0;
   while (total_consumed < map.size) {
     res = gst_av1_parser_identify_one_obu (priv->parser,
@@ -591,9 +664,19 @@ out:
   if (ret == GST_FLOW_OK) {
     if (priv->current_picture->frame_hdr.show_frame ||
         priv->current_picture->frame_hdr.show_existing_frame) {
-      g_assert (klass->output_picture);
-      /* transfer ownership of frame and picture */
-      ret = klass->output_picture (self, frame, priv->current_picture);
+      /* Only output one frame with highest spatial id from each TU within
+       * the selected operating point, drop other frame(s) with lower spatial id
+       */
+      if (priv->parser->state.operating_point_idc &&
+          obu.header.obu_spatial_id <
+          _floor_log2 (priv->parser->state.operating_point_idc >> 8)) {
+        gst_av1_picture_unref (priv->current_picture);
+        ret = GST_FLOW_OK;
+      } else {
+        g_assert (klass->output_picture);
+        /* transfer ownership of frame and picture */
+        ret = klass->output_picture (self, frame, priv->current_picture);
+      }
     } else {
       GST_LOG_OBJECT (self, "Decode only picture %p", priv->current_picture);
       GST_VIDEO_CODEC_FRAME_SET_DECODE_ONLY (frame);
