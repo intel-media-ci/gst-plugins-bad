@@ -37,6 +37,7 @@
 #include "msdk.h"
 #include "msdk-enums.h"
 #include "gstmsdkcontext.h"
+#include "mfxjpeg.h"
 
 G_BEGIN_DECLS
 
