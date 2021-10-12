@@ -743,6 +743,9 @@ gst_va_dmabuf_allocator_setup_buffer_full (GstAllocator * allocator,
         GST_VIDEO_INFO_SIZE (&self->info));
   }
 
+  if (!desc.num_objects)
+    gst_va_buffer_surface_unref (buf);
+
   if (G_UNLIKELY (info)) {
     for (i = 0; i < desc.num_layers; i++) {
       g_assert (desc.layers[i].num_planes == 1);
@@ -1008,6 +1011,9 @@ gst_va_dmabuf_memories_setup (GstVaDisplay * display, GstVideoInfo * info,
     GST_INFO_OBJECT (display, "setting surface %#x to dmabuf fd %d",
         buf->surface, gst_dmabuf_memory_get_fd (mem[i]));
   }
+
+  if (!n_planes)
+    gst_va_buffer_surface_unref (buf);
 
   return TRUE;
 }
